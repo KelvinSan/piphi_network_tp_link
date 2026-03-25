@@ -1,0 +1,427 @@
+{
+  "devices": [
+    {
+      "id": "kasa_device",
+      "name": "TP-Link Kasa Device",
+      "description": "Generic behavior metadata for all Kasa device families supported by python-kasa.",
+      "capabilities": [
+        "switch",
+        "brightness",
+        "color_temperature",
+        "color",
+        "power",
+        "temperature",
+        "humidity",
+        "telemetry",
+        "refresh",
+        "dynamic_feature",
+        "energy_power",
+        "energy_today",
+        "energy_this_month"
+      ],
+      "intents": [
+        {
+          "id": "automate_kasa_device",
+          "label": "Automate Kasa device",
+          "description": "Build automations for any supported Kasa capability"
+        },
+        {
+          "id": "manage_energy_and_lighting",
+          "label": "Manage energy and lighting",
+          "description": "Control power and lighting features from one behavior flow"
+        },
+        {
+          "id": "resilience_recovery",
+          "label": "Resilience and recovery",
+          "description": "Recover from failures with fallback and reboot actions"
+        }
+      ],
+      "conditions": [
+        {
+          "id": "is_on",
+          "label": "Power state is on",
+          "type": "boolean"
+        },
+        {
+          "id": "feature_equals",
+          "label": "Feature equals value",
+          "type": "text",
+          "params": [
+            {
+              "name": "feature_id",
+              "label": "Feature ID",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "value",
+              "label": "Expected value",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "feature_in_range",
+          "label": "Feature in numeric range",
+          "type": "number",
+          "params": [
+            {
+              "name": "feature_id",
+              "label": "Feature ID",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "min_value",
+              "label": "Minimum value",
+              "type": "number",
+              "required": true
+            },
+            {
+              "name": "max_value",
+              "label": "Maximum value",
+              "type": "number",
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "signal_below",
+          "label": "Signal strength below",
+          "type": "number",
+          "params": [
+            {
+              "name": "dbm",
+              "label": "Signal threshold (dBm)",
+              "type": "number",
+              "min": -100,
+              "max": -20,
+              "default": -70,
+              "step": 1,
+              "required": true,
+              "unit": "dBm"
+            }
+          ]
+        },
+        {
+          "id": "power_above",
+          "label": "Power above threshold",
+          "type": "number",
+          "params": [
+            {
+              "name": "watts",
+              "label": "Power threshold (W)",
+              "type": "number",
+              "min": 0,
+              "max": 10000,
+              "default": 500,
+              "step": 1,
+              "required": true,
+              "unit": "W"
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "energy_today_above",
+          "label": "Today energy above threshold",
+          "type": "number",
+          "params": [
+            {
+              "name": "kwh",
+              "label": "Today energy threshold (kWh)",
+              "type": "number",
+              "min": 0,
+              "max": 200,
+              "default": 2,
+              "step": 0.1,
+              "required": true,
+              "unit": "kWh"
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "turn_on",
+          "label": "Turn on",
+          "params": [
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "turn_off",
+          "label": "Turn off",
+          "params": [
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "toggle",
+          "label": "Toggle power",
+          "params": [
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "set_brightness",
+          "label": "Set brightness",
+          "params": [
+            {
+              "name": "value",
+              "label": "Brightness",
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "default": 50,
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "set_color_temperature",
+          "label": "Set color temperature",
+          "params": [
+            {
+              "name": "value",
+              "label": "Color temperature",
+              "type": "number",
+              "min": 1500,
+              "max": 9000,
+              "default": 3000,
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "set_hue_saturation",
+          "label": "Set hue and saturation",
+          "params": [
+            {
+              "name": "hue",
+              "label": "Hue",
+              "type": "number",
+              "min": 0,
+              "max": 360,
+              "default": 180,
+              "required": true
+            },
+            {
+              "name": "saturation",
+              "label": "Saturation",
+              "type": "number",
+              "min": 0,
+              "max": 100,
+              "default": 75,
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "set_alias",
+          "label": "Set alias",
+          "params": [
+            {
+              "name": "alias",
+              "label": "Alias",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "reboot",
+          "label": "Reboot device",
+          "params": [
+            {
+              "name": "delay",
+              "label": "Delay seconds",
+              "type": "number",
+              "min": 0,
+              "max": 60,
+              "default": 1,
+              "required": false
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "set_feature",
+          "label": "Set feature",
+          "params": [
+            {
+              "name": "feature_id",
+              "label": "Feature ID",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "value",
+              "label": "Value",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "feature_action",
+          "label": "Feature action",
+          "params": [
+            {
+              "name": "feature_id",
+              "label": "Feature ID",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "value",
+              "label": "Value (optional)",
+              "type": "text",
+              "required": false
+            },
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "refresh",
+          "label": "Refresh state"
+        },
+        {
+          "id": "read_energy",
+          "label": "Read energy metrics",
+          "params": [
+            {
+              "name": "child_id",
+              "label": "Child ID (optional)",
+              "type": "text",
+              "required": false
+            }
+          ]
+        }
+      ],
+      "stop": [
+        {
+          "id": "after_duration",
+          "label": "After duration",
+          "type": "duration",
+          "params": [
+            {
+              "name": "duration",
+              "label": "Duration",
+              "type": "duration",
+              "default": "30m",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "when_condition_clears",
+          "label": "When condition clears",
+          "type": "boolean"
+        }
+      ],
+      "manualOverride": [
+        {
+          "id": "continue",
+          "label": "Continue automation"
+        },
+        {
+          "id": "pause",
+          "label": "Pause automation",
+          "params": [
+            {
+              "name": "duration",
+              "label": "Pause duration",
+              "type": "duration",
+              "default": "15m",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "disable_behavior",
+          "label": "Disable behavior"
+        }
+      ]
+    }
+  ]
+}
