@@ -22,6 +22,22 @@ def _safe_enum_like(value: Any) -> Any:
     return str(value)
 
 
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        normalized = value.strip().replace(",", "")
+        if not normalized:
+            return None
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
+    return None
+
+
 def _normalize_feature(feature_id: str, feature: Any) -> dict[str, Any]:
     feature_type = _safe_enum_like(getattr(feature, "type", None)) or "unknown"
     category = _safe_enum_like(getattr(feature, "category", None))
@@ -50,6 +66,66 @@ def _extract_features(device: Any) -> dict[str, dict[str, Any]]:
     return features
 
 
+def _match_feature(
+    features: dict[str, dict[str, Any]],
+    *,
+    id_tokens: list[str],
+    name_tokens: list[str] | None = None,
+) -> tuple[float | None, str | None]:
+    name_tokens = name_tokens or []
+    for feature in features.values():
+        fid = str(feature.get("id", "")).lower()
+        fname = str(feature.get("name", "")).lower()
+        if any(token in fid for token in id_tokens) or any(token in fname for token in name_tokens):
+            value = _to_float(feature.get("value"))
+            if value is not None:
+                return value, str(feature.get("unit", "") or "")
+    return None, None
+
+
+def _extract_energy_metrics(features: dict[str, dict[str, Any]]) -> dict[str, float]:
+    power_value, power_unit = _match_feature(
+        features,
+        id_tokens=["power", "current_power", "emeter_power"],
+        name_tokens=["power"],
+    )
+    today_value, today_unit = _match_feature(
+        features,
+        id_tokens=["today", "daily", "day_energy", "consumption_today"],
+        name_tokens=["today", "daily"],
+    )
+    month_value, month_unit = _match_feature(
+        features,
+        id_tokens=["month", "monthly", "this_month", "consumption_month"],
+        name_tokens=["month", "monthly"],
+    )
+
+    metrics: dict[str, float] = {}
+
+    if power_value is not None:
+        unit = (power_unit or "").strip().lower()
+        if unit == "mw":
+            metrics["current_power_w"] = power_value / 1000.0
+        else:
+            metrics["current_power_w"] = power_value
+
+    if today_value is not None:
+        unit = (today_unit or "").strip().lower()
+        if unit == "wh":
+            metrics["today_kwh"] = today_value / 1000.0
+        else:
+            metrics["today_kwh"] = today_value
+
+    if month_value is not None:
+        unit = (month_unit or "").strip().lower()
+        if unit == "wh":
+            metrics["month_kwh"] = month_value / 1000.0
+        else:
+            metrics["month_kwh"] = month_value
+
+    return metrics
+
+
 def _derive_capabilities_from_features(features: dict[str, dict[str, Any]]) -> list[str]:
     capabilities: set[str] = set()
 
@@ -69,12 +145,19 @@ def _derive_capabilities_from_features(features: dict[str, dict[str, Any]]) -> l
             capabilities.add("color")
         if "power" in feature_id and "w" in unit:
             capabilities.add("power")
+        if "today" in feature_id or "daily" in feature_id or "day_energy" in feature_id:
+            capabilities.add("energy_today")
+        if "month" in feature_id or "monthly" in feature_id or "consumption_month" in feature_id:
+            capabilities.add("energy_this_month")
         if "temperature" in feature_id:
             capabilities.add("temperature")
         if "humidity" in feature_id:
             capabilities.add("humidity")
         if feature_type in {"number", "sensor", "binary_sensor"}:
             capabilities.add("telemetry")
+
+    if any("power" in str(f.get("id", "")).lower() for f in features.values()):
+        capabilities.add("energy_power")
 
     capabilities.add("refresh")
     return sorted(capabilities)
@@ -95,11 +178,13 @@ def _has_writable_feature(features: dict[str, dict[str, Any]], candidates: list[
 
 
 def _build_supported_commands(device: Any, features: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    commands: list[dict[str, Any]] = [
-        {"id": "refresh", "label": "Refresh", "args": []},
-        {"id": "read_energy", "label": "Read Energy", "args": []},
-    ]
     has_children = bool(getattr(device, "children", []))
+    common_args = _command_args_for_child(has_children, [])
+
+    commands: list[dict[str, Any]] = [
+        {"id": "refresh", "label": "Refresh", "args": common_args},
+        {"id": "read_energy", "label": "Read Energy", "args": common_args},
+    ]
 
     if hasattr(device, "turn_on"):
         commands.append(
@@ -254,12 +339,14 @@ def _to_int(value: Any, arg_name: str) -> int:
 
 def _serialize_child(child: Any) -> dict[str, Any]:
     child_features = _extract_features(child)
+    child_energy = _extract_energy_metrics(child_features)
     return {
         "id": str(getattr(child, "device_id", "") or getattr(child, "alias", "")),
         "alias": getattr(child, "alias", None),
         "model": getattr(child, "model", None),
         "is_on": bool(getattr(child, "is_on", False)),
         "features": child_features,
+        "energy": child_energy,
         "capabilities": _derive_capabilities_from_features(child_features),
         "supported_commands": _build_supported_commands(child, child_features),
     }
@@ -268,12 +355,13 @@ def _serialize_child(child: Any) -> dict[str, Any]:
 def _serialize_device(device: Any) -> dict[str, Any]:
     features = _extract_features(device)
     children = [_serialize_child(child) for child in getattr(device, "children", [])]
+    energy = _extract_energy_metrics(features)
 
     signal = getattr(device, "rssi", None)
     if signal is None:
         signal = getattr(device, "signal_level", None)
 
-    return {
+    payload = {
         "host": device.host,
         "name": device.alias,
         "alias": device.alias,
@@ -284,11 +372,21 @@ def _serialize_device(device: Any) -> dict[str, Any]:
         "signal_strength": signal,
         "sys_info": device.sys_info,
         "features": features,
+        "energy": energy,
         "capabilities": _derive_capabilities_from_features(features),
         "commands": _build_supported_commands(device, features),
         "supported_commands": _build_supported_commands(device, features),
         "children": children,
     }
+
+    if "current_power_w" in energy:
+        payload["current_power_w"] = energy["current_power_w"]
+    if "today_kwh" in energy:
+        payload["today_kwh"] = energy["today_kwh"]
+    if "month_kwh" in energy:
+        payload["month_kwh"] = energy["month_kwh"]
+
+    return payload
 
 
 async def discover_devices() -> list[dict[str, Any]]:

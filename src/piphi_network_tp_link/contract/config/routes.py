@@ -66,13 +66,55 @@ def _resolve_runtime_auth(container_id: str | None) -> tuple[str, str]:
     return resolved_container_id, resolved_internal_token
 
 
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_telemetry_metrics(telemetry_data: dict[str, Any]) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "is_on": bool(telemetry_data.get("is_on", False)),
+        "device_type": telemetry_data.get("device_type"),
+        "model": telemetry_data.get("model"),
+        "signal_strength": telemetry_data.get("signal_strength"),
+    }
+
+    current_power_w = _safe_float(telemetry_data.get("current_power_w"))
+    today_kwh = _safe_float(telemetry_data.get("today_kwh"))
+    month_kwh = _safe_float(telemetry_data.get("month_kwh"))
+
+    energy = telemetry_data.get("energy") or {}
+    if current_power_w is None:
+        current_power_w = _safe_float(energy.get("current_power_w"))
+    if today_kwh is None:
+        today_kwh = _safe_float(energy.get("today_kwh"))
+    if month_kwh is None:
+        month_kwh = _safe_float(energy.get("month_kwh"))
+
+    if current_power_w is not None:
+        metrics["current_power_w"] = current_power_w
+    if today_kwh is not None:
+        metrics["today_kwh"] = today_kwh
+    if month_kwh is not None:
+        metrics["month_kwh"] = month_kwh
+
+    return {key: value for key, value in metrics.items() if value is not None}
+
+
 def _build_telemetry_payload(telemetry_data: dict[str, Any], device_id: str) -> dict[str, Any]:
     return {
         "device_id": device_id,
-        "metrics": telemetry_data,
+        "metrics": _build_telemetry_metrics(telemetry_data),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "units": {
             "signal_strength": "dBm",
+            "current_power_w": "W",
+            "today_kwh": "kWh",
+            "month_kwh": "kWh",
         },
     }
 
@@ -92,10 +134,11 @@ async def send_telemetry_to_core(
         if resolved_internal_token:
             headers["X-PiPhi-Integration-Token"] = resolved_internal_token
 
+        payload = _build_telemetry_payload(telemetry_data, device_id)
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url=TELEMETRY_URL,
-                json=_build_telemetry_payload(telemetry_data, device_id),
+                json=payload,
                 headers=headers,
             )
             response.raise_for_status()
