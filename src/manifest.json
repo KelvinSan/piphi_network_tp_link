@@ -34,7 +34,25 @@
         }
       },
       "discovery": {
-        "method": "direct"
+        "method": "direct",
+        "inputs": [
+          {
+            "name": "username",
+            "label": "Username or Email",
+            "type": "email",
+            "required": false,
+            "placeholder": "kasa@example.com",
+            "description": "Optional Kasa account username/email for devices that require authenticated discovery."
+          },
+          {
+            "name": "password",
+            "label": "Password",
+            "type": "password",
+            "secret": true,
+            "required": false,
+            "description": "Optional Kasa account password paired with the username/email above."
+          }
+        ]
       }
     },
     "windows": {
@@ -43,7 +61,25 @@
         "port": 3666
       },
       "discovery": {
-        "method": "proxy"
+        "method": "proxy",
+        "inputs": [
+          {
+            "name": "username",
+            "label": "Username or Email",
+            "type": "email",
+            "required": false,
+            "placeholder": "kasa@example.com",
+            "description": "Optional Kasa account username/email for devices that require authenticated discovery."
+          },
+          {
+            "name": "password",
+            "label": "Password",
+            "type": "password",
+            "secret": true,
+            "required": false,
+            "description": "Optional Kasa account password paired with the username/email above."
+          }
+        ]
       }
     },
     "macos": {
@@ -52,7 +88,25 @@
         "port": 3666
       },
       "discovery": {
-        "method": "proxy"
+        "method": "proxy",
+        "inputs": [
+          {
+            "name": "username",
+            "label": "Username or Email",
+            "type": "email",
+            "required": false,
+            "placeholder": "kasa@example.com",
+            "description": "Optional Kasa account username/email for devices that require authenticated discovery."
+          },
+          {
+            "name": "password",
+            "label": "Password",
+            "type": "password",
+            "secret": true,
+            "required": false,
+            "description": "Optional Kasa account password paired with the username/email above."
+          }
+        ]
       }
     }
   },

@@ -1,12 +1,13 @@
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from piphi_runtime_kit_python import RuntimeConfig
 
 
-class TPLinkDeviceConfig(BaseModel):
-    id: str
+class TPLinkDeviceConfig(RuntimeConfig):
     host: str
     alias: str | None = None
+    integration_id: str | None = None
     username: str | None = None
     password: str | None = None
     container_id: str | None = None

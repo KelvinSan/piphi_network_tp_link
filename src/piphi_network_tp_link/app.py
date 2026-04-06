@@ -43,4 +43,4 @@ if __name__ == "__main__":
         "root": {"handlers": ["default"], "level": "INFO"},
     }
     multiprocessing.freeze_support()
-    uvicorn.run(app, host="0.0.0.0", port=3666, log_config=config)
+    uvicorn.run(app, host="0.0.0.0", port=4185, log_config=config)

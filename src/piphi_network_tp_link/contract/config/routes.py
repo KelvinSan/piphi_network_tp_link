@@ -1,10 +1,26 @@
 import asyncio
-import datetime
-import os
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
+from piphi_runtime_kit_python import (
+    ConfigSyncCoordinator,
+    EventClient,
+    RuntimeConfigApplyResponse,
+    RuntimeConfigRemoveResponse,
+    TelemetryClient,
+    build_config_apply_response,
+    build_config_remove_response,
+    create_tracked_task,
+    format_config_apply_log,
+    format_runtime_auth_sync_log,
+    schedule_event_delivery,
+    schedule_telemetry_delivery,
+    shutdown_background_tasks as shutdown_runtime_background_tasks,
+)
+from piphi_runtime_kit_python.fastapi import (
+    get_payload_container_id,
+    sync_runtime_auth_from_fastapi_payload,
+)
 
 from piphi_network_tp_link.lib.kasa_client import execute_device_command, fetch_device_state
 from piphi_network_tp_link.lib.logging import logger
@@ -15,55 +31,82 @@ from piphi_network_tp_link.lib.schemas import (
     TPLinkDeviceConfig,
 )
 from piphi_network_tp_link.lib.store import (
-    devices,
-    get_runtime_auth_context,
-    latest_states,
-    set_runtime_auth_context,
+    append_event,
+    get_runtime_context,
+    registry,
     update_device_state,
 )
 
 config_router = APIRouter(tags=["config"])
-current_generation: int | None = None
 
-TELEMETRY_URL = "http://127.0.0.1:31419/api/v2/integrations/telemetry"
+CORE_BASE_URL = "http://127.0.0.1:31419"
 POLL_INTERVAL_SECONDS = 10
-INTERNAL_TOKEN_ENV_NAME = "PIPHI_INTEGRATION_INTERNAL_TOKEN"
+TELEMETRY_REQUEST_TIMEOUT_SECONDS = 3.0
+EVENT_REQUEST_TIMEOUT_SECONDS = 3.0
+runtime_context = get_runtime_context()
+telemetry_client = TelemetryClient(
+    process_state=runtime_context.process_state,
+    core_base_url=CORE_BASE_URL,
+    timeout_seconds=TELEMETRY_REQUEST_TIMEOUT_SECONDS,
+)
+event_client = EventClient(
+    process_state=runtime_context.process_state,
+    core_base_url=CORE_BASE_URL,
+    timeout_seconds=EVENT_REQUEST_TIMEOUT_SECONDS,
+)
+config_sync = ConfigSyncCoordinator(process_state=runtime_context.process_state)
 
 
-def _mask_token(token: str | None) -> str:
-    token = (token or "").strip()
-    if not token:
-        return "missing"
-    if len(token) <= 10:
-        return "present"
-    return f"{token[:6]}...{token[-4:]}"
+def schedule_event_send(
+    *,
+    event_type: str,
+    device: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+    source: str = "tp_link_kasa_runtime",
+    severity: str = "info",
+) -> None:
+    schedule_event_delivery(
+        process_state=runtime_context.process_state,
+        event_client=event_client,
+        auth_context=runtime_context.auth,
+        event_type=event_type,
+        device=device,
+        payload=payload,
+        source=source,
+        severity=severity,
+        record_event=append_event,
+        on_skipped=lambda reason, details: logger.debug(
+            "event_send_skipped "
+            f"reason={reason} "
+            f"event_type={details.get('event_type') or event_type} "
+            f"device_id={details.get('device_id') or 'unknown'}"
+        ),
+        on_error=lambda exc, details: logger.exception(
+            "event_send_unexpected_error "
+            f"event_type={details.get('event_type') or event_type} "
+            f"device_id={details.get('device_id') or 'unknown'} "
+            f"error={exc}"
+        ),
+    )
 
 
-def _sync_runtime_auth_from_request(request: Request, payload_container_id: str | None = None) -> None:
-    header_container_id = (request.headers.get("X-Container-Id") or "").strip()
-    header_token = (request.headers.get("X-PiPhi-Integration-Token") or "").strip()
+async def shutdown_background_tasks() -> None:
+    await shutdown_runtime_background_tasks(runtime_context.process_state)
 
-    set_runtime_auth_context(
-        container_id=header_container_id or payload_container_id,
-        internal_token=header_token,
+
+def _sync_runtime_auth_from_request(request: Request, payload: Any | None = None) -> None:
+    parsed_headers = sync_runtime_auth_from_fastapi_payload(
+        runtime_context,
+        request,
+        payload,
     )
 
     logger.info(
-        "runtime_internal_auth "
-        f"header_container_id={header_container_id or 'missing'} "
-        f"payload_container_id={payload_container_id or 'missing'} "
-        f"token={_mask_token(header_token)}"
+        format_runtime_auth_sync_log(
+            parsed_headers,
+            payload_container_id=get_payload_container_id(payload),
+        )
     )
-
-
-def _resolve_runtime_auth(container_id: str | None) -> tuple[str, str]:
-    runtime_auth = get_runtime_auth_context()
-    resolved_container_id = ((container_id or "").strip() or runtime_auth.get("container_id", "").strip())
-    resolved_internal_token = (
-        runtime_auth.get("internal_token", "").strip()
-        or (os.getenv(INTERNAL_TOKEN_ENV_NAME) or "").strip()
-    )
-    return resolved_container_id, resolved_internal_token
 
 
 def _safe_float(value: Any) -> float | None:
@@ -104,55 +147,6 @@ def _build_telemetry_metrics(telemetry_data: dict[str, Any]) -> dict[str, Any]:
 
     return {key: value for key, value in metrics.items() if value is not None}
 
-
-def _build_telemetry_payload(telemetry_data: dict[str, Any], device_id: str) -> dict[str, Any]:
-    return {
-        "device_id": device_id,
-        "metrics": _build_telemetry_metrics(telemetry_data),
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "units": {
-            "signal_strength": "dBm",
-            "current_power_w": "W",
-            "today_kwh": "kWh",
-            "month_kwh": "kWh",
-        },
-    }
-
-
-async def send_telemetry_to_core(
-    telemetry_data: dict[str, Any],
-    device_id: str,
-    container_id: str | None,
-) -> None:
-    try:
-        resolved_container_id, resolved_internal_token = _resolve_runtime_auth(container_id)
-        if not resolved_container_id:
-            logger.warning("telemetry_send_skipped reason=missing_container_id")
-            return
-
-        headers = {"X-Container-Id": resolved_container_id}
-        if resolved_internal_token:
-            headers["X-PiPhi-Integration-Token"] = resolved_internal_token
-
-        payload = _build_telemetry_payload(telemetry_data, device_id)
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url=TELEMETRY_URL,
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
-    except httpx.RequestError as exc:
-        logger.error(f"telemetry_send_request_error error={exc}")
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "telemetry_send_http_error "
-            f"status={exc.response.status_code} body={exc.response.text}"
-        )
-    except Exception:
-        logger.exception("telemetry_send_unexpected_error")
-
-
 async def fetch_and_store_state(
     *,
     host: str,
@@ -161,15 +155,69 @@ async def fetch_and_store_state(
     username: str | None = None,
     password: str | None = None,
 ) -> dict[str, Any]:
+    previous_state = (registry.get(device_id) or {}).get("latest_state") or {}
     payload = await fetch_device_state(host=host, username=username, password=password)
     latest_state = update_device_state(device_id=device_id, state=payload)
     if container_id:
-        await send_telemetry_to_core(
-            telemetry_data=payload,
+        schedule_telemetry_delivery(
+            process_state=runtime_context.process_state,
+            telemetry_client=telemetry_client,
+            auth_context=runtime_context.auth,
+            device_id=device_id,
+            metrics=_build_telemetry_metrics(payload),
+            container_id=container_id,
+            units={
+                "signal_strength": "dBm",
+                "current_power_w": "W",
+                "today_kwh": "kWh",
+                "month_kwh": "kWh",
+            },
+            on_skipped=lambda reason, details: logger.warning(
+                "telemetry_send_skipped "
+                f"reason={reason} "
+                f"device_id={details.get('device_id') or device_id}"
+            ),
+            on_error=lambda exc, details: logger.exception(
+                "telemetry_send_unexpected_error "
+                f"device_id={details.get('device_id') or device_id} "
+                f"error={exc}"
+            ),
+        )
+        if registry.get(device_id) is not None:
+            previous_is_on = bool(previous_state.get("is_on")) if previous_state else None
+            current_is_on = bool(payload.get("is_on"))
+            if previous_is_on is not None and previous_is_on != current_is_on:
+                device_entry = registry.get(device_id) or {}
+                schedule_event_send(
+                    event_type="device.turned_on" if current_is_on else "device.turned_off",
+                    device=device_entry,
+                    payload={
+                        "alias": device_entry.get("alias"),
+                        "host": host,
+                        "is_on": current_is_on,
+                    },
+                )
+    return latest_state
+
+
+def start_device_poll_task(
+    *,
+    host: str,
+    device_id: str,
+    container_id: str | None,
+    username: str | None = None,
+    password: str | None = None,
+) -> asyncio.Task[Any]:
+    return create_tracked_task(
+        poll_device_state(
+            host=host,
             device_id=device_id,
             container_id=container_id,
-        )
-    return latest_state
+            username=username,
+            password=password,
+        ),
+        process_state=runtime_context.process_state,
+    )
 
 
 async def run_command_for_device(
@@ -178,24 +226,45 @@ async def run_command_for_device(
     command: str,
     args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    device = devices.get(device_id)
+    device = registry.get(device_id)
     if device is None:
         raise HTTPException(status_code=404, detail=f"Device '{device_id}' is not configured")
 
     try:
-        return await execute_device_command(
+        result = await execute_device_command(
             host=device["host"],
             command=command,
             args=args or {},
             username=device.get("username"),
             password=device.get("password"),
         )
+        schedule_event_send(
+            event_type="device.command.executed",
+            device=device,
+            payload={
+                "command": command,
+                "args": args or {},
+                "host": device.get("host"),
+            },
+        )
+        return result
     except Exception as exc:
+        schedule_event_send(
+            event_type="device.command.failed",
+            device=device,
+            payload={
+                "command": command,
+                "args": args or {},
+                "host": device.get("host"),
+                "error": str(exc),
+            },
+            severity="error",
+        )
         raise HTTPException(status_code=400, detail=f"Command failed: {exc}") from exc
 
 
 async def trigger_refresh(device_id: str) -> dict[str, Any]:
-    device = devices.get(device_id)
+    device = registry.get(device_id)
     if device is None:
         raise HTTPException(status_code=404, detail=f"Device '{device_id}' is not configured")
 
@@ -238,7 +307,7 @@ async def poll_device_state(
 
 
 async def remove_device_config(device_id: str) -> bool:
-    existing_poll = devices.get(device_id)
+    existing_poll = registry.get(device_id)
     if existing_poll and existing_poll.get("task") and not existing_poll["task"].done():
         existing_poll["task"].cancel()
         try:
@@ -246,129 +315,107 @@ async def remove_device_config(device_id: str) -> bool:
         except asyncio.CancelledError:
             pass
 
-    removed = device_id in devices
-    devices.pop(device_id, None)
-    latest_states.pop(device_id, None)
+    removed = registry.get(device_id) is not None
+    if existing_poll is not None:
+        schedule_event_send(
+            event_type="device.deconfigured",
+            device=existing_poll,
+            payload={
+                "alias": existing_poll.get("alias"),
+                "host": existing_poll.get("host"),
+            },
+        )
+    registry.remove(device_id)
     return removed
 
 
 async def apply_device_config(payload: TPLinkDeviceConfig) -> dict[str, Any]:
-    runtime_auth = get_runtime_auth_context()
-    resolved_container_id = payload.container_id or runtime_auth.get("container_id") or None
-
-    if resolved_container_id:
-        set_runtime_auth_context(container_id=resolved_container_id)
+    logger.info(format_config_apply_log(payload))
+    resolved_container_id, _ = runtime_context.auth.resolve(container_id=payload.container_id)
 
     await remove_device_config(payload.id)
-    task = asyncio.create_task(
-        poll_device_state(
-            host=payload.host,
-            device_id=payload.id,
-            container_id=resolved_container_id,
-            username=payload.username,
-            password=payload.password,
-        )
+    task = start_device_poll_task(
+        host=payload.host,
+        device_id=payload.id,
+        container_id=resolved_container_id,
+        username=payload.username,
+        password=payload.password,
     )
-    devices[payload.id] = {
+    registry.set(payload.id, {
         "task": task,
+        "config_id": payload.id,
         "container_id": resolved_container_id,
         "device_id": payload.id,
         "host": payload.host,
         "alias": payload.alias,
+        "integration_id": payload.integration_id,
         "username": payload.username,
         "password": payload.password,
-    }
+    })
 
     try:
         await trigger_refresh(payload.id)
     except HTTPException as exc:
         logger.warning(f"kasa_initial_refresh_failed device_id={payload.id} detail={exc.detail}")
 
-    return {
-        "status": "configured",
-        "device_id": payload.id,
-        "host": payload.host,
-    }
-
-
-async def apply_runtime_config_snapshot(payload: RuntimeConfigSnapshot) -> RuntimeConfigSyncResponse:
-    global current_generation
-
-    incoming_generation = payload.generation
-    if (
-        incoming_generation is not None
-        and current_generation is not None
-        and int(incoming_generation) < int(current_generation)
-    ):
-        return RuntimeConfigSyncResponse(
-            status="stale_ignored",
-            container_id=payload.container_id,
-            reason=payload.reason,
-            generation=current_generation,
-            applied=[],
-            removed=[],
-            active_config_ids=list(devices.keys()),
-            metadata={
-                "stale_generation_ignored": True,
-                "incoming_generation": incoming_generation,
-                "current_generation": current_generation,
-            },
-        )
-
-    incoming_ids = {config.id for config in payload.configs}
-    active_ids = list(devices.keys())
-    removed_ids: list[str] = []
-    applied_ids: list[str] = []
-
-    for device_id in active_ids:
-        if device_id not in incoming_ids:
-            removed = await remove_device_config(device_id)
-            if removed:
-                removed_ids.append(device_id)
-
-    for config in payload.configs:
-        await apply_device_config(config)
-        applied_ids.append(config.id)
-
-    if incoming_generation is not None:
-        current_generation = int(incoming_generation)
-
-    return RuntimeConfigSyncResponse(
-        status="synced",
-        container_id=payload.container_id,
-        reason=payload.reason,
-        generation=current_generation,
-        applied=applied_ids,
-        removed=removed_ids,
-        active_config_ids=list(devices.keys()),
-        metadata={
-            "applied_count": len(applied_ids),
-            "removed_count": len(removed_ids),
-            "current_generation": current_generation,
+    device_entry = registry.get(payload.id) or {}
+    schedule_event_send(
+        event_type="device.configured",
+        device=device_entry,
+        payload={
+            "alias": payload.alias,
+            "host": payload.host,
+            "model": device_entry.get("latest_state", {}).get("model"),
         },
     )
 
+    return build_config_apply_response(
+        config_id=payload.id,
+        container_id=resolved_container_id,
+        metadata={"host": payload.host},
+    ).model_dump()
+
+
+async def apply_runtime_config_snapshot(payload: RuntimeConfigSnapshot) -> RuntimeConfigSyncResponse:
+    async def apply_config_with_context(config: TPLinkDeviceConfig) -> dict[str, Any]:
+        effective_config = config.model_copy(
+            update={
+                "integration_id": config.integration_id or payload.integration_id,
+                "container_id": config.container_id or payload.container_id,
+            }
+        )
+        return await apply_device_config(effective_config)
+
+    response = await config_sync.apply_snapshot(
+        snapshot=payload,
+        active_config_ids=registry.ids(),
+        apply_config=apply_config_with_context,
+        remove_config=remove_device_config,
+        get_active_config_ids=registry.ids,
+    )
+    return RuntimeConfigSyncResponse(**response.model_dump())
+
 
 @config_router.post("/config")
-async def config(payload: TPLinkDeviceConfig, request: Request) -> dict:
-    _sync_runtime_auth_from_request(request, payload.container_id)
-    return await apply_device_config(payload)
+async def config(payload: TPLinkDeviceConfig, request: Request) -> RuntimeConfigApplyResponse:
+    _sync_runtime_auth_from_request(request, payload)
+    return RuntimeConfigApplyResponse.model_validate(await apply_device_config(payload))
 
 
 @config_router.post("/configs/sync", response_model=RuntimeConfigSyncResponse)
 async def sync_configs(payload: RuntimeConfigSnapshot, request: Request) -> RuntimeConfigSyncResponse:
-    _sync_runtime_auth_from_request(request, payload.container_id)
+    _sync_runtime_auth_from_request(request, payload)
     return await apply_runtime_config_snapshot(payload)
 
 
 @config_router.post("/config/sync", response_model=RuntimeConfigSyncResponse)
 async def sync_config(payload: RuntimeConfigSnapshot, request: Request) -> RuntimeConfigSyncResponse:
-    _sync_runtime_auth_from_request(request, payload.container_id)
+    _sync_runtime_auth_from_request(request, payload)
     return await apply_runtime_config_snapshot(payload)
 
 
 @config_router.post("/deconfigure")
-async def deconfigure_device(payload: DeconfigureConfig) -> dict:
+async def deconfigure_device(payload: DeconfigureConfig) -> RuntimeConfigRemoveResponse:
     device_id = payload.config.get("id")
     if device_id is None:
         raise HTTPException(status_code=400, detail="Missing config id")
@@ -377,7 +424,7 @@ async def deconfigure_device(payload: DeconfigureConfig) -> dict:
     if not removed:
         logger.info(f"deconfigure_noop device_id={device_id}")
 
-    return {
-        "status": "deconfigured",
-        "device_id": device_id,
-    }
+    return build_config_remove_response(
+        config_id=str(device_id),
+        removed=removed,
+    )

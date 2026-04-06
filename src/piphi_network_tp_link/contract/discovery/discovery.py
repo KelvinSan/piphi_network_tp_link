@@ -1,16 +1,56 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from piphi_runtime_kit_python import (
+    build_discovery_response,
+    format_discovery_attempt_log,
+    normalize_discovery_inputs,
+)
 
 from piphi_network_tp_link.lib.kasa_client import discover_devices
+from piphi_network_tp_link.lib.logging import logger
 
 
 router = APIRouter(tags=["discovery"])
 
 
+class DiscoveryRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+
+
+async def _run_discovery(
+    username: str | None = None,
+    password: str | None = None,
+) -> dict:
+    normalized_inputs = normalize_discovery_inputs(
+        {
+            "username": username,
+            "password": password,
+        }
+    )
+    logger.info(format_discovery_attempt_log(inputs=normalized_inputs))
+
+    try:
+        devices = await discover_devices(
+            username=normalized_inputs.get("username"),
+            password=normalized_inputs.get("password"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Discovery failed: {exc}") from exc
+
+    return build_discovery_response(devices).model_dump()
+
+
 @router.get("/discover")
 @router.get("/discovery")
 async def get_discovered_devices() -> dict:
-    try:
-        devices = await discover_devices()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Discovery failed: {exc}") from exc
-    return {"devices": devices}
+    return await _run_discovery()
+
+
+@router.post("/discover")
+@router.post("/discovery")
+async def discover_devices_with_inputs(request: DiscoveryRequest) -> dict:
+    return await _run_discovery(
+        username=request.username,
+        password=request.password,
+    )

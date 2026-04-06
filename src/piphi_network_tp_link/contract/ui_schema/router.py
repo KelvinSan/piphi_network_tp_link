@@ -34,9 +34,41 @@ async def get_ui_schema() -> dict:
                 "type": "string",
                 "title": "Kasa Password (Optional)",
                 "description": "Required only for devices that require authenticated local access.",
-                "format": "password",
                 "default": "",
             },
         },
     }
-    return {"schema": schema}
+    ui_schema = {
+        "host": {
+            "ui:options": {
+                "text": {
+                    "placeholder": "192.168.1.50",
+                    "autocomplete": "off",
+                },
+            },
+        },
+        "alias": {
+            "ui:options": {
+                "text": {
+                    "placeholder": "Living Room Plug",
+                    "autocomplete": "off",
+                },
+            },
+        },
+        "username": {
+            "ui:options": {
+                "text": {
+                    "autocomplete": "username",
+                },
+            },
+        },
+        "password": {
+            "ui:options": {
+                "text": {
+                    "type": "password",
+                    "autocomplete": "current-password",
+                },
+            },
+        },
+    }
+    return {"schema": schema, "uiSchema": ui_schema}

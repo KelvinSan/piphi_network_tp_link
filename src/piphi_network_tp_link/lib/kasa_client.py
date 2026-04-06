@@ -281,7 +281,7 @@ def _build_supported_commands(device: Any, features: dict[str, dict[str, Any]]) 
 async def _resolve_device(host: str, username: str | None = None, password: str | None = None) -> Any:
     device = await Discover.discover_single(
         host,
-        discovery_timeout=5,
+        discovery_timeout=10,
         username=username,
         password=password,
     )
@@ -389,8 +389,15 @@ def _serialize_device(device: Any) -> dict[str, Any]:
     return payload
 
 
-async def discover_devices() -> list[dict[str, Any]]:
-    found = await Discover.discover(discovery_timeout=5)
+async def discover_devices(
+    username: str | None = None,
+    password: str | None = None,
+) -> list[dict[str, Any]]:
+    found = await Discover.discover(
+        discovery_timeout=10,
+        username=username,
+        password=password,
+    )
     devices: list[dict[str, Any]] = []
 
     for _, device in found.items():
