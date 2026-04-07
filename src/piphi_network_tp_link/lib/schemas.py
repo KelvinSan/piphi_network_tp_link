@@ -5,6 +5,7 @@ from piphi_runtime_kit_python import RuntimeConfig
 
 
 class TPLinkDeviceConfig(RuntimeConfig):
+    config_id: str | None = None
     host: str
     alias: str | None = None
     integration_id: str | None = None

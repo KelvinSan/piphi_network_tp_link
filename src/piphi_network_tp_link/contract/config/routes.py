@@ -40,7 +40,7 @@ from piphi_network_tp_link.lib.store import (
 config_router = APIRouter(tags=["config"])
 
 CORE_BASE_URL = "http://127.0.0.1:31419"
-POLL_INTERVAL_SECONDS = 10
+POLL_INTERVAL_SECONDS = 30
 TELEMETRY_REQUEST_TIMEOUT_SECONDS = 3.0
 EVENT_REQUEST_TIMEOUT_SECONDS = 3.0
 runtime_context = get_runtime_context()
@@ -343,7 +343,7 @@ async def apply_device_config(payload: TPLinkDeviceConfig) -> dict[str, Any]:
     )
     registry.set(payload.id, {
         "task": task,
-        "config_id": payload.id,
+        "config_id": payload.config_id or payload.id,
         "container_id": resolved_container_id,
         "device_id": payload.id,
         "host": payload.host,
@@ -370,7 +370,7 @@ async def apply_device_config(payload: TPLinkDeviceConfig) -> dict[str, Any]:
     )
 
     return build_config_apply_response(
-        config_id=payload.id,
+        config_id=payload.config_id or payload.id,
         container_id=resolved_container_id,
         metadata={"host": payload.host},
     ).model_dump()
