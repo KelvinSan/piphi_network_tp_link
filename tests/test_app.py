@@ -593,16 +593,51 @@ def test_tp_link_diagnostics_reports_device_ids() -> None:
     assert diagnostics["devices_with_state"] == ["plug-1"]
 
 
-def test_tp_link_entities_route_returns_manifest_sections() -> None:
+def test_tp_link_entities_route_returns_device_specific_commands() -> None:
     reset_runtime_state()
+    registry.set(
+        "plug-1",
+        {
+            "config_id": "plug-1",
+            "device_id": "plug-1",
+            "alias": "Kitchen Plug",
+            "host": "192.168.1.25",
+        },
+    )
+    registry.update_state(
+        "plug-1",
+        {
+            "capabilities": ["switch", "power", "energy_power", "energy_today", "energy_this_month"],
+            "device_type": "DeviceType.Plug",
+            "model": "KP115",
+            "is_on": True,
+            "current_power_w": 8.2,
+            "today_kwh": 0.12,
+            "month_kwh": 1.34,
+        },
+    )
 
     with TestClient(app) as client:
         response = client.get("/entities")
 
     assert response.status_code == 200
-    assert "entities" in response.json()
-    assert "capabilities" in response.json()
-    assert "commands" in response.json()
+    payload = response.json()
+    assert "entities" in payload
+    assert "capabilities" in payload
+    assert "commands" in payload
+    assert len(payload["entities"]) == 1
+    entity = payload["entities"][0]
+    assert entity["device_class"] == "plug"
+    assert entity["entity_type"] == "switch"
+    assert [command["id"] for command in entity["available_commands"]] == [
+        "toggle",
+        "turn_on",
+        "turn_off",
+        "read_energy",
+        "refresh",
+    ]
+    assert entity["available_commands"][0]["label"] == "Toggle"
+    assert entity["available_commands"][3]["label"] == "Refresh Energy"
 
 
 def test_tp_link_manifest_route_returns_identity_fields() -> None:
