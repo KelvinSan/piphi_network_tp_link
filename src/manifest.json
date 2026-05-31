@@ -18,7 +18,7 @@
     "linux": {
       "type": "container",
       "container": {
-        "image": "piphinetwork/tp-link-kasa",
+        "image": "piphinetwork/tp-link-kasa:0.1.0",
         "ports": [
           {
             "container": 3666,
