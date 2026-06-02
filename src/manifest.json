@@ -2,7 +2,7 @@
   "manifest_version": "1.0",
   "id": "tp-link-kasa-local-api",
   "name": "TP-Link Kasa (Local API)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Integration for TP-Link Kasa devices over local network using python-kasa.",
   "maintainer": {
     "name": "PiPhi Network",
@@ -18,7 +18,7 @@
     "linux": {
       "type": "container",
       "container": {
-        "image": "piphinetwork/tp-link-kasa:0.1.0",
+        "image": "piphinetwork/tp-link-kasa:0.1.1",
         "ports": [
           {
             "container": 3666,
