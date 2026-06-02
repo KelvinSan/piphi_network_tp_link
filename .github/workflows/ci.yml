@@ -34,14 +34,26 @@ jobs:
         working-directory: current
         env:
           PYTHONPATH: src
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests scripts
 
-      - name: Validate manifest JSON
+      - name: Validate metadata JSON
         working-directory: current
-        run: python -m json.tool src/manifest.json >/dev/null
+        run: |
+          python -m json.tool src/manifest.json >/dev/null
+          python -m json.tool src/behaviors.json >/dev/null
+
+      - name: Validate release script
+        working-directory: current
+        run: |
+          python3 -m py_compile scripts/release.py
+          python3 scripts/release.py --bump patch --docker-image piphinetwork/tp-link-kasa --dry-run
 
       - name: Run tests
         working-directory: current
         env:
           PYTHONPATH: src
         run: pytest
+
+      - name: Build Docker image
+        working-directory: current
+        run: docker build -t piphi-tp-link-kasa-smoke .
