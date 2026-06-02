@@ -304,6 +304,10 @@
       "description": "Set any writable Kasa feature via args.feature_id + args.value",
       "timeout_ms": 5000
     },
+    "dynamic_feature": {
+      "description": "Set or trigger any writable Kasa feature via args.feature_id and optional args.value",
+      "timeout_ms": 5000
+    },
     "feature_action": {
       "description": "Trigger a writable action-like feature via args.feature_id",
       "timeout_ms": 5000

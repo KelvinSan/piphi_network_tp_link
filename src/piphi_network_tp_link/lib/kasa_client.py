@@ -462,7 +462,7 @@ async def execute_device_command(
 
         feature = _resolve_writable_feature(target, feature_id=feature_id)
         await feature.set_value(args.get("value"))
-    elif command == "feature_action":
+    elif command in {"dynamic_feature", "feature_action"}:
         feature_id = str(args.get("feature_id") or "").strip()
         if not feature_id:
             raise RuntimeError("Missing required arg 'feature_id'")

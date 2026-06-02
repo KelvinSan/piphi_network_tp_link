@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import time
 
@@ -19,6 +20,7 @@ from piphi_network_tp_link.lib.store import registry, runtime_context
 config_module = importlib.import_module("piphi_network_tp_link.contract.config.routes")
 command_module = importlib.import_module("piphi_network_tp_link.contract.command.router")
 discovery_module = importlib.import_module("piphi_network_tp_link.contract.discovery.discovery")
+kasa_client_module = importlib.import_module("piphi_network_tp_link.lib.kasa_client")
 
 
 class _DummyTask:
@@ -26,6 +28,33 @@ class _DummyTask:
         return True
 
     def cancel(self) -> None:
+        return None
+
+
+class _FakeFeature:
+    attribute_setter = True
+
+    def __init__(self) -> None:
+        self.value = None
+
+    async def set_value(self, value) -> None:
+        self.value = value
+
+
+class _FakeKasaDevice:
+    host = "192.168.1.25"
+    alias = "Desk Plug"
+    model = "KP125M"
+    device_type = "plug"
+    mac = "00:11:22:33:44:55"
+    sys_info = {}
+    children = []
+    features: dict[str, _FakeFeature]
+
+    def __init__(self, feature: _FakeFeature) -> None:
+        self.features = {"led": feature}
+
+    async def update(self) -> None:
         return None
 
 
@@ -650,6 +679,44 @@ def test_tp_link_manifest_route_returns_identity_fields() -> None:
     assert response.json()["id"]
     assert response.json()["name"]
     assert response.json()["version"]
+
+
+def test_tp_link_manifest_maps_action_capabilities_to_commands() -> None:
+    reset_runtime_state()
+
+    with TestClient(app) as client:
+        response = client.get("/manifest.json")
+
+    assert response.status_code == 200
+    manifest = response.json()
+    action_capabilities = {
+        capability_id
+        for capability_id, capability in manifest["capabilities"].items()
+        if capability.get("kind") == "action"
+    }
+
+    assert action_capabilities <= set(manifest["commands"])
+    assert "dynamic_feature" in manifest["commands"]
+
+
+def test_dynamic_feature_command_sets_writable_feature(monkeypatch) -> None:
+    feature = _FakeFeature()
+    device = _FakeKasaDevice(feature)
+
+    async def fake_resolve_device(*, host: str, username=None, password=None):
+        return device
+
+    monkeypatch.setattr(kasa_client_module, "_resolve_device", fake_resolve_device)
+
+    asyncio.run(
+        kasa_client_module.execute_device_command(
+            host="192.168.1.25",
+            command="dynamic_feature",
+            args={"feature_id": "led", "value": False},
+        )
+    )
+
+    assert feature.value is False
 
 
 def test_tp_link_state_returns_404_for_unknown_explicit_device() -> None:
