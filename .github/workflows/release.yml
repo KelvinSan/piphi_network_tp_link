@@ -75,12 +75,6 @@ jobs:
             exit 1
           fi
 
-      - name: Check out runtime testkit
-        uses: actions/checkout@v4
-        with:
-          repository: PiPhi-io/piphi-runtime-testkit-python
-          path: piphi-runtime-testkit-python
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

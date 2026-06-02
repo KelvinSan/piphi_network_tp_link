@@ -17,11 +17,11 @@ PyPI.
 
 ## Runtime SDK and testkit
 
-- runtime SDK: `piphi-runtime-kit-python==0.3.1`
-- local test helper during development: `piphi-runtime-testkit-python`
+- runtime SDK: `piphi-runtime-kit-python==0.4.6`
+- test helper during development: `piphi-runtime-testkit-python==0.1.3`
 
-The runtime kit is now installed from PyPI. The local testkit path dependency is
-only there for repo development and tests.
+The runtime kit and testkit are installed from PyPI, so CI and release installs
+do not require sibling repository checkouts.
 
 ## Local development
 
