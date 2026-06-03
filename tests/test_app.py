@@ -532,6 +532,29 @@ def test_tp_link_discovery_post_passes_credentials(monkeypatch) -> None:
     assert observed == {"username": "user", "password": "pass"}
 
 
+def test_tp_link_discovery_post_passes_host_hint(monkeypatch) -> None:
+    reset_runtime_state()
+    observed: dict[str, object] = {}
+
+    async def fake_discover_devices(username=None, password=None, host=None):
+        observed["host"] = host
+        observed["username"] = username
+        observed["password"] = password
+        return [{"device_id": "plug-1", "host": host}]
+
+    monkeypatch.setattr(discovery_module, "discover_devices", fake_discover_devices)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/discover",
+            json={"host": " 10.0.0.227 ", "username": "user", "password": "pass"},
+        )
+
+    assert response.status_code == 200
+    assert observed == {"host": "10.0.0.227", "username": "user", "password": "pass"}
+    assert response.json()["devices"][0]["host"] == "10.0.0.227"
+
+
 def test_tp_link_discovery_returns_500_on_exception(monkeypatch) -> None:
     reset_runtime_state()
 
@@ -545,6 +568,54 @@ def test_tp_link_discovery_returns_500_on_exception(monkeypatch) -> None:
 
     assert response.status_code == 500
     assert "Discovery failed: boom" in response.json()["detail"]
+
+
+def test_tp_link_targeted_discovery_uses_host_hint(monkeypatch) -> None:
+    reset_runtime_state()
+    observed: dict[str, object] = {}
+    feature = _FakeFeature()
+    device = _FakeKasaDevice(feature)
+
+    async def fake_resolve_device(*, host: str, username=None, password=None):
+        observed["host"] = host
+        observed["username"] = username
+        observed["password"] = password
+        return device
+
+    async def failing_broadcast_discover(**kwargs):
+        raise AssertionError("broadcast discovery should not run when host is provided")
+
+    monkeypatch.setattr(kasa_client_module, "_resolve_device", fake_resolve_device)
+    monkeypatch.setattr(kasa_client_module.Discover, "discover", failing_broadcast_discover)
+
+    devices = asyncio.run(
+        kasa_client_module.discover_devices(
+            host="10.0.0.227",
+            username="user",
+            password="pass",
+        )
+    )
+
+    assert observed == {"host": "10.0.0.227", "username": "user", "password": "pass"}
+    assert devices[0]["host"] == "192.168.1.25"
+    assert devices[0]["name"] == "Desk Plug"
+
+
+def test_tp_link_broadcast_discovery_reports_host_hint_on_scan_failure(monkeypatch) -> None:
+    reset_runtime_state()
+
+    async def failing_broadcast_discover(**kwargs):
+        raise RuntimeError("No time zone found with key EST")
+
+    monkeypatch.setattr(kasa_client_module.Discover, "discover", failing_broadcast_discover)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(kasa_client_module.discover_devices())
+
+    message = str(exc_info.value)
+    assert "Network scan failed" in message
+    assert "device IP address or hostname" in message
+    assert "No time zone found with key EST" in message
 
 
 def test_tp_link_events_list_is_empty_by_default() -> None:

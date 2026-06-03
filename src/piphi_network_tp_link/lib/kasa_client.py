@@ -392,17 +392,41 @@ def _serialize_device(device: Any) -> dict[str, Any]:
 async def discover_devices(
     username: str | None = None,
     password: str | None = None,
+    host: str | None = None,
 ) -> list[dict[str, Any]]:
-    found = await Discover.discover(
-        discovery_timeout=10,
-        username=username,
-        password=password,
-    )
+    host = str(host or "").strip()
+    if host:
+        return [await fetch_device_state(host=host, username=username, password=password)]
+
+    try:
+        found = await Discover.discover(
+            discovery_timeout=10,
+            username=username,
+            password=password,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Network scan failed ({exc}). Try entering the device IP address or hostname for targeted discovery."
+        ) from exc
+
     devices: list[dict[str, Any]] = []
+    failures: list[str] = []
 
     for _, device in found.items():
-        await device.update()
-        devices.append(_serialize_device(device))
+        try:
+            await device.update()
+            devices.append(_serialize_device(device))
+        except Exception as exc:
+            host_hint = str(getattr(device, "host", "") or "unknown-host")
+            failures.append(f"{host_hint}: {exc}")
+
+    if not devices and failures:
+        raise RuntimeError(
+            "Discovered devices, but none could be read. "
+            + "Try targeted discovery with the device IP address. "
+            + "Failures: "
+            + "; ".join(failures)
+        )
 
     return devices
 

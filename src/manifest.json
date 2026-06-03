@@ -37,6 +37,14 @@
         "method": "direct",
         "inputs": [
           {
+            "name": "host",
+            "label": "Device IP / Host",
+            "type": "text",
+            "required": false,
+            "placeholder": "192.168.1.50",
+            "description": "Optional IP address or hostname for targeted discovery when network scanning misses a device."
+          },
+          {
             "name": "username",
             "label": "Username or Email",
             "type": "email",
@@ -64,6 +72,14 @@
         "method": "proxy",
         "inputs": [
           {
+            "name": "host",
+            "label": "Device IP / Host",
+            "type": "text",
+            "required": false,
+            "placeholder": "192.168.1.50",
+            "description": "Optional IP address or hostname for targeted discovery when network scanning misses a device."
+          },
+          {
             "name": "username",
             "label": "Username or Email",
             "type": "email",
@@ -90,6 +106,14 @@
       "discovery": {
         "method": "proxy",
         "inputs": [
+          {
+            "name": "host",
+            "label": "Device IP / Host",
+            "type": "text",
+            "required": false,
+            "placeholder": "192.168.1.50",
+            "description": "Optional IP address or hostname for targeted discovery when network scanning misses a device."
+          },
           {
             "name": "username",
             "label": "Username or Email",

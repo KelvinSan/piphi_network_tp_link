@@ -14,16 +14,19 @@ router = APIRouter(tags=["discovery"])
 
 
 class DiscoveryRequest(BaseModel):
+    host: str | None = None
     username: str | None = None
     password: str | None = None
 
 
 async def _run_discovery(
+    host: str | None = None,
     username: str | None = None,
     password: str | None = None,
 ) -> dict:
     normalized_inputs = normalize_discovery_inputs(
         {
+            "host": host,
             "username": username,
             "password": password,
         }
@@ -31,10 +34,13 @@ async def _run_discovery(
     logger.info(format_discovery_attempt_log(inputs=normalized_inputs))
 
     try:
-        devices = await discover_devices(
-            username=normalized_inputs.get("username"),
-            password=normalized_inputs.get("password"),
-        )
+        discover_kwargs = {
+            "username": normalized_inputs.get("username"),
+            "password": normalized_inputs.get("password"),
+        }
+        if normalized_inputs.get("host"):
+            discover_kwargs["host"] = normalized_inputs["host"]
+        devices = await discover_devices(**discover_kwargs)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Discovery failed: {exc}") from exc
 
@@ -51,6 +57,7 @@ async def get_discovered_devices() -> dict:
 @router.post("/discovery")
 async def discover_devices_with_inputs(request: DiscoveryRequest) -> dict:
     return await _run_discovery(
+        host=request.host,
         username=request.username,
         password=request.password,
     )
