@@ -296,6 +296,11 @@
           "runtime": {
             "command": "turn_on"
           },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -343,6 +348,11 @@
           "runtime": {
             "command": "turn_off"
           },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -389,6 +399,11 @@
           "capability": "switch.power",
           "runtime": {
             "command": "toggle"
+          },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
@@ -446,6 +461,11 @@
           "runtime": {
             "command": "set_brightness"
           },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -501,6 +521,11 @@
           "capability": "light.color",
           "runtime": {
             "command": "set_color_temperature"
+          },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
@@ -567,6 +592,11 @@
           "runtime": {
             "command": "set_hue_saturation"
           },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -619,6 +649,11 @@
           "capability": "action.set_alias",
           "runtime": {
             "command": "set_alias"
+          },
+          "safety": {
+            "riskLevel": "medium",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
@@ -675,6 +710,11 @@
           "capability": "device.restart",
           "runtime": {
             "command": "reboot"
+          },
+          "safety": {
+            "riskLevel": "high",
+            "requiresConfirmation": true,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
@@ -735,6 +775,11 @@
           "runtime": {
             "command": "set_feature"
           },
+          "safety": {
+            "riskLevel": "high",
+            "requiresConfirmation": true,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -794,6 +839,11 @@
           "runtime": {
             "command": "feature_action"
           },
+          "safety": {
+            "riskLevel": "high",
+            "requiresConfirmation": true,
+            "liveRunAllowed": true
+          },
           "targeting": {
             "fanoutSafe": true,
             "scopes": [
@@ -832,6 +882,11 @@
           "capability": "device.refresh",
           "runtime": {
             "command": "refresh"
+          },
+          "safety": {
+            "riskLevel": "low",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
@@ -879,6 +934,11 @@
           "capability": "action.read_energy",
           "runtime": {
             "command": "read_energy"
+          },
+          "safety": {
+            "riskLevel": "low",
+            "requiresConfirmation": false,
+            "liveRunAllowed": true
           },
           "targeting": {
             "fanoutSafe": true,
