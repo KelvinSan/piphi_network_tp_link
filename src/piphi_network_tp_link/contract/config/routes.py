@@ -58,6 +58,34 @@ event_client = EventClient(
 config_sync = ConfigSyncCoordinator(process_state=runtime_context.process_state)
 
 
+def _entry_id_for_config(payload: TPLinkDeviceConfig) -> str:
+    return str(payload.config_id or payload.id).strip()
+
+
+def _physical_device_id_for_config(payload: TPLinkDeviceConfig, entry_id: str) -> str:
+    for value in (
+        getattr(payload, "physical_device_id", None),
+        payload.id,
+        getattr(payload, "device_id", None),
+    ):
+        candidate = str(value or "").strip()
+        if candidate and candidate != entry_id:
+            return candidate
+    return entry_id
+
+
+def _normalize_snapshot_config(config: TPLinkDeviceConfig) -> TPLinkDeviceConfig:
+    entry_id = _entry_id_for_config(config)
+    if not entry_id or str(config.id or "").strip() == entry_id:
+        return config
+    return config.model_copy(
+        update={
+            "id": entry_id,
+            "physical_device_id": _physical_device_id_for_config(config, entry_id),
+        }
+    )
+
+
 def schedule_event_send(
     *,
     event_type: str,
@@ -333,20 +361,23 @@ async def remove_device_config(device_id: str) -> bool:
 async def apply_device_config(payload: TPLinkDeviceConfig) -> dict[str, Any]:
     logger.info(format_config_apply_log(payload))
     resolved_container_id, _ = runtime_context.auth.resolve(container_id=payload.container_id)
+    entry_id = _entry_id_for_config(payload)
+    physical_device_id = _physical_device_id_for_config(payload, entry_id)
 
-    await remove_device_config(payload.id)
+    await remove_device_config(entry_id)
     task = start_device_poll_task(
         host=payload.host,
-        device_id=payload.id,
+        device_id=entry_id,
         container_id=resolved_container_id,
         username=payload.username,
         password=payload.password,
     )
-    registry.set(payload.id, {
+    registry.set(entry_id, {
         "task": task,
-        "config_id": payload.config_id or payload.id,
+        "config_id": entry_id,
         "container_id": resolved_container_id,
-        "device_id": payload.id,
+        "device_id": entry_id,
+        "physical_device_id": physical_device_id,
         "host": payload.host,
         "alias": payload.alias,
         "integration_id": payload.integration_id,
@@ -355,40 +386,45 @@ async def apply_device_config(payload: TPLinkDeviceConfig) -> dict[str, Any]:
     })
 
     try:
-        await trigger_refresh(payload.id)
+        await trigger_refresh(entry_id)
     except HTTPException as exc:
-        logger.warning(f"kasa_initial_refresh_failed device_id={payload.id} detail={exc.detail}")
+        logger.warning(f"kasa_initial_refresh_failed device_id={entry_id} detail={exc.detail}")
 
-    device_entry = registry.get(payload.id) or {}
+    device_entry = registry.get(entry_id) or {}
     schedule_event_send(
         event_type="device.configured",
         device=device_entry,
         payload={
             "alias": payload.alias,
             "host": payload.host,
+            "physical_device_id": physical_device_id,
             "model": device_entry.get("latest_state", {}).get("model"),
         },
     )
 
     return build_config_apply_response(
-        config_id=payload.config_id or payload.id,
+        config_id=entry_id,
         container_id=resolved_container_id,
         metadata={"host": payload.host},
     ).model_dump()
 
 
 async def apply_runtime_config_snapshot(payload: RuntimeConfigSnapshot) -> RuntimeConfigSyncResponse:
+    normalized_payload = payload.model_copy(
+        update={"configs": [_normalize_snapshot_config(config) for config in payload.configs]}
+    )
+
     async def apply_config_with_context(config: TPLinkDeviceConfig) -> dict[str, Any]:
         effective_config = config.model_copy(
             update={
-                "integration_id": config.integration_id or payload.integration_id,
-                "container_id": config.container_id or payload.container_id,
+                "integration_id": config.integration_id or normalized_payload.integration_id,
+                "container_id": config.container_id or normalized_payload.container_id,
             }
         )
         return await apply_device_config(effective_config)
 
     response = await config_sync.apply_snapshot(
-        snapshot=payload,
+        snapshot=normalized_payload,
         active_config_ids=registry.ids(),
         apply_config=apply_config_with_context,
         remove_config=remove_device_config,

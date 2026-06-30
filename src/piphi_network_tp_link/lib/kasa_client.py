@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
-from kasa import Discover
+from kasa import Credentials, Device, Discover
+
+_DIRECT_CONNECT_TIMEOUT = 10
+_DEVICE_CONFIG_CACHE: dict[str, Any] = {}
 
 
 def _safe_feature_value(value: Any) -> Any:
@@ -76,7 +80,9 @@ def _match_feature(
     for feature in features.values():
         fid = str(feature.get("id", "")).lower()
         fname = str(feature.get("name", "")).lower()
-        if any(token in fid for token in id_tokens) or any(token in fname for token in name_tokens):
+        if any(token in fid for token in id_tokens) or any(
+            token in fname for token in name_tokens
+        ):
             value = _to_float(feature.get("value"))
             if value is not None:
                 return value, str(feature.get("unit", "") or "")
@@ -126,7 +132,9 @@ def _extract_energy_metrics(features: dict[str, dict[str, Any]]) -> dict[str, fl
     return metrics
 
 
-def _derive_capabilities_from_features(features: dict[str, dict[str, Any]]) -> list[str]:
+def _derive_capabilities_from_features(
+    features: dict[str, dict[str, Any]],
+) -> list[str]:
     capabilities: set[str] = set()
 
     if "state" in features:
@@ -147,7 +155,11 @@ def _derive_capabilities_from_features(features: dict[str, dict[str, Any]]) -> l
             capabilities.add("power")
         if "today" in feature_id or "daily" in feature_id or "day_energy" in feature_id:
             capabilities.add("energy_today")
-        if "month" in feature_id or "monthly" in feature_id or "consumption_month" in feature_id:
+        if (
+            "month" in feature_id
+            or "monthly" in feature_id
+            or "consumption_month" in feature_id
+        ):
             capabilities.add("energy_this_month")
         if "temperature" in feature_id:
             capabilities.add("temperature")
@@ -163,13 +175,34 @@ def _derive_capabilities_from_features(features: dict[str, dict[str, Any]]) -> l
     return sorted(capabilities)
 
 
+async def _disconnect_device(device: Any) -> None:
+    try:
+        disconnect = getattr(device, "disconnect", None)
+        if callable(disconnect):
+            result = disconnect()
+            if inspect.isawaitable(result):
+                await result
+            return
+
+        protocol = getattr(device, "protocol", None)
+        close = getattr(protocol, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+    except Exception:
+        return
+
+
 def _command_args_for_child(has_children: bool, args: list[str]) -> list[str]:
     if has_children:
         return ["child_id", *args]
     return args
 
 
-def _has_writable_feature(features: dict[str, dict[str, Any]], candidates: list[str]) -> bool:
+def _has_writable_feature(
+    features: dict[str, dict[str, Any]], candidates: list[str]
+) -> bool:
     for candidate in candidates:
         feature = features.get(candidate)
         if feature and feature.get("writable"):
@@ -177,7 +210,9 @@ def _has_writable_feature(features: dict[str, dict[str, Any]], candidates: list[
     return False
 
 
-def _build_supported_commands(device: Any, features: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_supported_commands(
+    device: Any, features: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
     has_children = bool(getattr(device, "children", []))
     common_args = _command_args_for_child(has_children, [])
 
@@ -229,7 +264,9 @@ def _build_supported_commands(device: Any, features: dict[str, dict[str, Any]]) 
             }
         )
 
-    writable_features = [feature for feature in features.values() if feature.get("writable")]
+    writable_features = [
+        feature for feature in features.values() if feature.get("writable")
+    ]
     if writable_features:
         commands.append(
             {
@@ -278,16 +315,54 @@ def _build_supported_commands(device: Any, features: dict[str, dict[str, Any]]) 
     return commands
 
 
-async def _resolve_device(host: str, username: str | None = None, password: str | None = None) -> Any:
+def _build_credentials(
+    username: str | None = None, password: str | None = None
+) -> Credentials | None:
+    if username and password:
+        return Credentials(username=username, password=password)
+    return None
+
+
+def _cache_device_config(host: str, device: Any) -> None:
+    config = getattr(device, "config", None)
+    if config is not None:
+        _DEVICE_CONFIG_CACHE[host] = config
+
+
+async def _resolve_device(
+    host: str, username: str | None = None, password: str | None = None
+) -> Any:
+    credentials = _build_credentials(username=username, password=password)
+    cached_config = _DEVICE_CONFIG_CACHE.get(host)
+
+    if cached_config is not None:
+        try:
+            return await Device.connect(config=cached_config)
+        except Exception:
+            _DEVICE_CONFIG_CACHE.pop(host, None)
+
+    device = await Discover.try_connect_all(
+        host,
+        timeout=_DIRECT_CONNECT_TIMEOUT,
+        credentials=credentials,
+    )
+    if device is not None:
+        _cache_device_config(host, device)
+        return device
+
     device = await Discover.discover_single(
         host,
-        discovery_timeout=10,
-        username=username,
-        password=password,
+        discovery_timeout=_DIRECT_CONNECT_TIMEOUT,
+        credentials=credentials,
     )
     if device is None:
-        raise RuntimeError(f"Unable to discover Kasa device at host '{host}'")
-    await device.update()
+        raise RuntimeError(f"Unable to connect to Kasa device at host '{host}'")
+    try:
+        await device.update()
+        _cache_device_config(host, device)
+    except Exception:
+        await _disconnect_device(device)
+        raise
     return device
 
 
@@ -299,7 +374,8 @@ def _resolve_command_target(device: Any, args: dict[str, Any]) -> Any:
     child = device.get_child_device(child_id)
     if child is None:
         available = [
-            str(getattr(child_device, "device_id", "")).strip() or str(getattr(child_device, "alias", ""))
+            str(getattr(child_device, "device_id", "")).strip()
+            or str(getattr(child_device, "alias", ""))
             for child_device in getattr(device, "children", [])
         ]
         raise RuntimeError(
@@ -308,7 +384,9 @@ def _resolve_command_target(device: Any, args: dict[str, Any]) -> Any:
     return child
 
 
-def _resolve_writable_feature(target: Any, feature_id: str, candidates: list[str] | None = None) -> Any:
+def _resolve_writable_feature(
+    target: Any, feature_id: str, candidates: list[str] | None = None
+) -> Any:
     if feature_id:
         feature = target.features.get(feature_id)
         if feature is None:
@@ -396,7 +474,9 @@ async def discover_devices(
 ) -> list[dict[str, Any]]:
     host = str(host or "").strip()
     if host:
-        return [await fetch_device_state(host=host, username=username, password=password)]
+        return [
+            await fetch_device_state(host=host, username=username, password=password)
+        ]
 
     try:
         found = await Discover.discover(
@@ -419,6 +499,8 @@ async def discover_devices(
         except Exception as exc:
             host_hint = str(getattr(device, "host", "") or "unknown-host")
             failures.append(f"{host_hint}: {exc}")
+        finally:
+            await _disconnect_device(device)
 
     if not devices and failures:
         raise RuntimeError(
@@ -431,9 +513,14 @@ async def discover_devices(
     return devices
 
 
-async def fetch_device_state(host: str, username: str | None = None, password: str | None = None) -> dict[str, Any]:
+async def fetch_device_state(
+    host: str, username: str | None = None, password: str | None = None
+) -> dict[str, Any]:
     device = await _resolve_device(host=host, username=username, password=password)
-    return _serialize_device(device)
+    try:
+        return _serialize_device(device)
+    finally:
+        await _disconnect_device(device)
 
 
 async def execute_device_command(
@@ -446,74 +533,81 @@ async def execute_device_command(
 ) -> dict[str, Any]:
     args = args or {}
     device = await _resolve_device(host=host, username=username, password=password)
-    target = _resolve_command_target(device, args)
+    try:
+        target = _resolve_command_target(device, args)
 
-    if command == "turn_on":
-        if not hasattr(target, "turn_on"):
-            raise RuntimeError("This device does not support turn_on")
-        await target.turn_on()
-    elif command == "turn_off":
-        if not hasattr(target, "turn_off"):
-            raise RuntimeError("This device does not support turn_off")
-        await target.turn_off()
-    elif command == "toggle":
-        if not hasattr(target, "turn_on") or not hasattr(target, "turn_off"):
-            raise RuntimeError("This device does not support toggle")
-        if bool(getattr(target, "is_on", False)):
-            await target.turn_off()
-        else:
+        if command == "turn_on":
+            if not hasattr(target, "turn_on"):
+                raise RuntimeError("This device does not support turn_on")
             await target.turn_on()
-    elif command == "set_alias":
-        alias = str(args.get("alias") or "").strip()
-        if not alias:
-            raise RuntimeError("Missing required arg 'alias'")
-        if not hasattr(target, "set_alias"):
-            raise RuntimeError("This device does not support set_alias")
-        await target.set_alias(alias)
-    elif command == "reboot":
-        delay = _to_int(args.get("delay", 1), "delay")
-        if not hasattr(target, "reboot"):
-            raise RuntimeError("This device does not support reboot")
-        await target.reboot(delay=delay)
-    elif command in {"refresh", "read_energy"}:
-        pass
-    elif command == "set_feature":
-        feature_id = str(args.get("feature_id") or "").strip()
-        if not feature_id:
-            raise RuntimeError("Missing required arg 'feature_id'")
-        if "value" not in args:
-            raise RuntimeError("Missing required arg 'value' for set_feature")
+        elif command == "turn_off":
+            if not hasattr(target, "turn_off"):
+                raise RuntimeError("This device does not support turn_off")
+            await target.turn_off()
+        elif command == "toggle":
+            if not hasattr(target, "turn_on") or not hasattr(target, "turn_off"):
+                raise RuntimeError("This device does not support toggle")
+            if bool(getattr(target, "is_on", False)):
+                await target.turn_off()
+            else:
+                await target.turn_on()
+        elif command == "set_alias":
+            alias = str(args.get("alias") or "").strip()
+            if not alias:
+                raise RuntimeError("Missing required arg 'alias'")
+            if not hasattr(target, "set_alias"):
+                raise RuntimeError("This device does not support set_alias")
+            await target.set_alias(alias)
+        elif command == "reboot":
+            delay = _to_int(args.get("delay", 1), "delay")
+            if not hasattr(target, "reboot"):
+                raise RuntimeError("This device does not support reboot")
+            await target.reboot(delay=delay)
+        elif command in {"refresh", "read_energy"}:
+            pass
+        elif command == "set_feature":
+            feature_id = str(args.get("feature_id") or "").strip()
+            if not feature_id:
+                raise RuntimeError("Missing required arg 'feature_id'")
+            if "value" not in args:
+                raise RuntimeError("Missing required arg 'value' for set_feature")
 
-        feature = _resolve_writable_feature(target, feature_id=feature_id)
-        await feature.set_value(args.get("value"))
-    elif command in {"dynamic_feature", "feature_action"}:
-        feature_id = str(args.get("feature_id") or "").strip()
-        if not feature_id:
-            raise RuntimeError("Missing required arg 'feature_id'")
+            feature = _resolve_writable_feature(target, feature_id=feature_id)
+            await feature.set_value(args.get("value"))
+        elif command in {"dynamic_feature", "feature_action"}:
+            feature_id = str(args.get("feature_id") or "").strip()
+            if not feature_id:
+                raise RuntimeError("Missing required arg 'feature_id'")
 
-        feature = _resolve_writable_feature(target, feature_id=feature_id)
-        await feature.set_value(args.get("value", None))
-    elif command == "set_brightness":
-        feature = _resolve_writable_feature(
-            target,
-            feature_id="",
-            candidates=["brightness", "dimming_level"],
-        )
-        await feature.set_value(_to_int(args.get("value"), "value"))
-    elif command == "set_color_temperature":
-        feature = _resolve_writable_feature(
-            target,
-            feature_id="",
-            candidates=["color_temperature", "color_temp"],
-        )
-        await feature.set_value(_to_int(args.get("value"), "value"))
-    elif command == "set_hue_saturation":
-        hue_feature = _resolve_writable_feature(target, feature_id="", candidates=["hue"])
-        sat_feature = _resolve_writable_feature(target, feature_id="", candidates=["saturation"])
-        await hue_feature.set_value(_to_int(args.get("hue"), "hue"))
-        await sat_feature.set_value(_to_int(args.get("saturation"), "saturation"))
-    else:
-        raise RuntimeError(f"Unsupported command '{command}'")
+            feature = _resolve_writable_feature(target, feature_id=feature_id)
+            await feature.set_value(args.get("value", None))
+        elif command == "set_brightness":
+            feature = _resolve_writable_feature(
+                target,
+                feature_id="",
+                candidates=["brightness", "dimming_level"],
+            )
+            await feature.set_value(_to_int(args.get("value"), "value"))
+        elif command == "set_color_temperature":
+            feature = _resolve_writable_feature(
+                target,
+                feature_id="",
+                candidates=["color_temperature", "color_temp"],
+            )
+            await feature.set_value(_to_int(args.get("value"), "value"))
+        elif command == "set_hue_saturation":
+            hue_feature = _resolve_writable_feature(
+                target, feature_id="", candidates=["hue"]
+            )
+            sat_feature = _resolve_writable_feature(
+                target, feature_id="", candidates=["saturation"]
+            )
+            await hue_feature.set_value(_to_int(args.get("hue"), "hue"))
+            await sat_feature.set_value(_to_int(args.get("saturation"), "saturation"))
+        else:
+            raise RuntimeError(f"Unsupported command '{command}'")
 
-    await device.update()
-    return _serialize_device(device)
+        await device.update()
+        return _serialize_device(device)
+    finally:
+        await _disconnect_device(device)

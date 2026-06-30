@@ -18,8 +18,12 @@ from piphi_network_tp_link.app import app
 from piphi_network_tp_link.lib.store import registry, runtime_context
 
 config_module = importlib.import_module("piphi_network_tp_link.contract.config.routes")
-command_module = importlib.import_module("piphi_network_tp_link.contract.command.router")
-discovery_module = importlib.import_module("piphi_network_tp_link.contract.discovery.discovery")
+command_module = importlib.import_module(
+    "piphi_network_tp_link.contract.command.router"
+)
+discovery_module = importlib.import_module(
+    "piphi_network_tp_link.contract.discovery.discovery"
+)
 kasa_client_module = importlib.import_module("piphi_network_tp_link.lib.kasa_client")
 
 
@@ -51,10 +55,23 @@ class _FakeKasaDevice:
     children = []
     features: dict[str, _FakeFeature]
 
-    def __init__(self, feature: _FakeFeature) -> None:
+    def __init__(
+        self, feature: _FakeFeature, update_error: Exception | None = None
+    ) -> None:
         self.features = {"led": feature}
+        self.update_error = update_error
+        self.update_calls = 0
+        self.disconnect_calls = 0
+        self.config = object()
 
     async def update(self) -> None:
+        self.update_calls += 1
+        if self.update_error is not None:
+            raise self.update_error
+        return None
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
         return None
 
 
@@ -65,6 +82,7 @@ def reset_runtime_state() -> None:
     runtime_context.auth.container_id = ""
     runtime_context.auth.internal_token = ""
     runtime_context.process_state.background_tasks.clear()
+    kasa_client_module._DEVICE_CONFIG_CACHE.clear()
 
 
 def wait_for(condition, *, timeout: float = 2.0) -> None:
@@ -82,7 +100,9 @@ def test_config_apply_sends_tp_link_telemetry_and_event(
 ) -> None:
     reset_runtime_state()
 
-    async def fake_fetch_device_state(*, host: str, username=None, password=None) -> dict[str, object]:
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
         return {
             "is_on": True,
             "device_type": "plug",
@@ -93,10 +113,14 @@ def test_config_apply_sends_tp_link_telemetry_and_event(
             "month_kwh": 1.34,
         }
 
-    monkeypatch.setattr(config_module.telemetry_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
     monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
     monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
-    monkeypatch.setattr(config_module, "start_device_poll_task", lambda **kwargs: _DummyTask())
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
 
     payload = build_config_payload(
         config_id="plug-1",
@@ -107,7 +131,9 @@ def test_config_apply_sends_tp_link_telemetry_and_event(
             "alias": "Desk Plug",
         },
     )
-    headers = build_runtime_headers(container_id="runtime-123", internal_token="secret-token")
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
 
     with TestClient(app) as client:
         response = client.post("/config", json=payload, headers=headers)
@@ -125,16 +151,24 @@ def test_config_apply_sends_tp_link_telemetry_and_event(
             event_type="device.configured",
         )
 
-        telemetry_headers = {key.lower(): value for key, value in telemetry_request.headers.items()}
-        event_headers = {key.lower(): value for key, value in event_request.headers.items()}
+        telemetry_headers = {
+            key.lower(): value for key, value in telemetry_request.headers.items()
+        }
+        event_headers = {
+            key.lower(): value for key, value in event_request.headers.items()
+        }
 
         assert telemetry_headers["x-container-id"] == "runtime-123"
         assert telemetry_headers["x-piphi-integration-token"] == "secret-token"
         assert event_headers["x-container-id"] == "runtime-123"
         assert event_headers["x-piphi-integration-token"] == "secret-token"
+        assert telemetry_request.json_body["device_id"] == "plug-1"
         assert telemetry_request.json_body["metrics"]["current_power_w"] == 8.2
         assert telemetry_request.json_body["units"]["current_power_w"] == "W"
-        assert (event_request.json_body.get("event_type") or event_request.json_body.get("type")) == "device.configured"
+        assert (
+            event_request.json_body.get("event_type")
+            or event_request.json_body.get("type")
+        ) == "device.configured"
 
 
 def test_config_sync_replaces_tp_link_device_and_uses_testkit_snapshot(
@@ -143,7 +177,9 @@ def test_config_sync_replaces_tp_link_device_and_uses_testkit_snapshot(
 ) -> None:
     reset_runtime_state()
 
-    async def fake_fetch_device_state(*, host: str, username=None, password=None) -> dict[str, object]:
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
         return {
             "is_on": True,
             "device_type": "plug",
@@ -154,10 +190,14 @@ def test_config_sync_replaces_tp_link_device_and_uses_testkit_snapshot(
             "month_kwh": 1.34,
         }
 
-    monkeypatch.setattr(config_module.telemetry_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
     monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
     monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
-    monkeypatch.setattr(config_module, "start_device_poll_task", lambda **kwargs: _DummyTask())
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
 
     old_payload = build_config_payload(
         config_id="plug-old",
@@ -183,7 +223,9 @@ def test_config_sync_replaces_tp_link_device_and_uses_testkit_snapshot(
         integration_id="piphi-network-tp-link",
         generation=6,
     )
-    headers = build_runtime_headers(container_id="runtime-123", internal_token="secret-token")
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
 
     with TestClient(app) as client:
         first_response = client.post("/config", json=old_payload, headers=headers)
@@ -219,8 +261,144 @@ def test_config_sync_replaces_tp_link_device_and_uses_testkit_snapshot(
         )
 
         assert telemetry_request.json_body["metrics"]["current_power_w"] == 8.2
-        assert (configured_event.json_body.get("event_type") or configured_event.json_body.get("type")) == "device.configured"
-        assert (deconfigured_event.json_body.get("event_type") or deconfigured_event.json_body.get("type")) == "device.deconfigured"
+        assert (
+            configured_event.json_body.get("event_type")
+            or configured_event.json_body.get("type")
+        ) == "device.configured"
+        assert (
+            deconfigured_event.json_body.get("event_type")
+            or deconfigured_event.json_body.get("type")
+        ) == "device.deconfigured"
+
+
+def test_config_sync_keeps_duplicate_physical_device_ids_distinct(
+    mock_core,
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
+        is_bulb = host == "10.0.0.136"
+        return {
+            "is_on": is_bulb,
+            "device_type": "bulb" if is_bulb else "plug",
+            "model": "KL110" if is_bulb else "KP115",
+            "signal_strength": -41 if is_bulb else -48,
+            "current_power_w": 5.0 if is_bulb else 1.2,
+        }
+
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
+    monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
+
+    configs = [
+        {
+            "id": "shared-kasa-device-id",
+            "config_id": "bulb-config",
+            "container_id": "runtime-123",
+            "integration_id": "piphi-network-tp-link",
+            "host": "10.0.0.136",
+            "alias": "Smart Bulb",
+        },
+        {
+            "id": "shared-kasa-device-id",
+            "config_id": "plug-config",
+            "container_id": "runtime-123",
+            "integration_id": "piphi-network-tp-link",
+            "host": "10.0.0.227",
+            "alias": "KP115 Plug",
+        },
+    ]
+    snapshot = {
+        "container_id": "runtime-123",
+        "integration_id": "piphi-network-tp-link",
+        "generation": 7,
+        "configs": configs,
+    }
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/config/sync", json=snapshot, headers=headers)
+        assert response.status_code == 200
+
+        response_json = response.json()
+        assert response_json["applied"] == ["bulb-config", "plug-config"]
+        assert response_json["active_config_ids"] == ["bulb-config", "plug-config"]
+        assert registry.ids() == ["bulb-config", "plug-config"]
+        assert (
+            registry.get("bulb-config")["physical_device_id"] == "shared-kasa-device-id"
+        )
+        assert (
+            registry.get("plug-config")["physical_device_id"] == "shared-kasa-device-id"
+        )
+        assert registry.get("bulb-config")["host"] == "10.0.0.136"
+        assert registry.get("plug-config")["host"] == "10.0.0.227"
+        assert registry.get("shared-kasa-device-id") is None
+
+        wait_for(lambda: len(mock_core.telemetry_requests) >= 2)
+        assert_telemetry_sent(mock_core, device_id="bulb-config")
+        assert_telemetry_sent(mock_core, device_id="plug-config")
+
+
+def test_config_sync_accepts_masked_secret_placeholders(
+    mock_core,
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
+        return {
+            "is_on": True,
+            "device_type": "plug",
+            "model": "KP115",
+            "signal_strength": -48,
+        }
+
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
+    monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
+
+    snapshot = {
+        "container_id": "runtime-123",
+        "integration_id": "piphi-network-tp-link",
+        "generation": 8,
+        "configs": [
+            {
+                "id": "plug-1",
+                "config_id": "plug-1",
+                "container_id": "runtime-123",
+                "integration_id": "piphi-network-tp-link",
+                "host": "10.0.0.227",
+                "alias": "KP115 Plug",
+                "password": {"__piphi_secret__": True, "masked": True},
+            }
+        ],
+    }
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/config/sync", json=snapshot, headers=headers)
+
+    assert response.status_code == 200
+    assert registry.get("plug-1")["password"] is None
 
 
 def test_state_route_refreshes_missing_tp_link_snapshot_with_testkit(
@@ -229,7 +407,9 @@ def test_state_route_refreshes_missing_tp_link_snapshot_with_testkit(
 ) -> None:
     reset_runtime_state()
 
-    async def fake_fetch_device_state(*, host: str, username=None, password=None) -> dict[str, object]:
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
         return {
             "is_on": True,
             "device_type": "plug",
@@ -240,9 +420,13 @@ def test_state_route_refreshes_missing_tp_link_snapshot_with_testkit(
             "month_kwh": 1.34,
         }
 
-    monkeypatch.setattr(config_module.telemetry_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
     monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
-    monkeypatch.setattr(config_module, "start_device_poll_task", lambda **kwargs: _DummyTask())
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
 
     payload = build_config_payload(
         config_id="plug-1",
@@ -253,7 +437,9 @@ def test_state_route_refreshes_missing_tp_link_snapshot_with_testkit(
             "alias": "Desk Plug",
         },
     )
-    headers = build_runtime_headers(container_id="runtime-123", internal_token="secret-token")
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
 
     with TestClient(app) as client:
         config_response = client.post("/config", json=payload, headers=headers)
@@ -279,7 +465,9 @@ def test_deconfigure_sends_tp_link_event_and_removes_entry(
 ) -> None:
     reset_runtime_state()
 
-    async def fake_fetch_device_state(*, host: str, username=None, password=None) -> dict[str, object]:
+    async def fake_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
         return {
             "is_on": True,
             "device_type": "plug",
@@ -290,10 +478,14 @@ def test_deconfigure_sends_tp_link_event_and_removes_entry(
             "month_kwh": 1.34,
         }
 
-    monkeypatch.setattr(config_module.telemetry_client, "core_base_url", mock_core.base_url)
+    monkeypatch.setattr(
+        config_module.telemetry_client, "core_base_url", mock_core.base_url
+    )
     monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
     monkeypatch.setattr(config_module, "fetch_device_state", fake_fetch_device_state)
-    monkeypatch.setattr(config_module, "start_device_poll_task", lambda **kwargs: _DummyTask())
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
 
     payload = build_config_payload(
         config_id="plug-1",
@@ -304,7 +496,9 @@ def test_deconfigure_sends_tp_link_event_and_removes_entry(
             "alias": "Desk Plug",
         },
     )
-    headers = build_runtime_headers(container_id="runtime-123", internal_token="secret-token")
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
 
     with TestClient(app) as client:
         config_response = client.post("/config", json=payload, headers=headers)
@@ -313,7 +507,9 @@ def test_deconfigure_sends_tp_link_event_and_removes_entry(
 
         mock_core.reset()
 
-        deconfigure_response = client.post("/deconfigure", json={"config": {"id": "plug-1"}})
+        deconfigure_response = client.post(
+            "/deconfigure", json={"config": {"id": "plug-1"}}
+        )
         assert deconfigure_response.status_code == 200
         assert deconfigure_response.json()["removed"] is True
         assert registry.get("plug-1") is None
@@ -325,7 +521,10 @@ def test_deconfigure_sends_tp_link_event_and_removes_entry(
             config_id="plug-1",
             event_type="device.deconfigured",
         )
-        assert (event_request.json_body.get("event_type") or event_request.json_body.get("type")) == "device.deconfigured"
+        assert (
+            event_request.json_body.get("event_type")
+            or event_request.json_body.get("type")
+        ) == "device.deconfigured"
 
 
 def test_state_returns_404_when_no_tp_link_device_is_configured() -> None:
@@ -387,10 +586,14 @@ def test_tp_link_command_returns_404_without_primary_device() -> None:
     assert response.json()["detail"] == "No configured device found"
 
 
-def test_tp_link_command_runs_device_command_and_returns_refreshed_state(monkeypatch) -> None:
+def test_tp_link_command_runs_device_command_and_returns_refreshed_state(
+    monkeypatch,
+) -> None:
     reset_runtime_state()
 
-    async def fake_run_command_for_device(*, device_id: str, command: str, args: dict[str, object]):
+    async def fake_run_command_for_device(
+        *, device_id: str, command: str, args: dict[str, object]
+    ):
         return {"ok": True, "command": command, "args": args}
 
     async def fake_trigger_refresh(device_id: str):
@@ -406,13 +609,19 @@ def test_tp_link_command_runs_device_command_and_returns_refreshed_state(monkeyp
         },
     )
 
-    monkeypatch.setattr(command_module, "run_command_for_device", fake_run_command_for_device)
+    monkeypatch.setattr(
+        command_module, "run_command_for_device", fake_run_command_for_device
+    )
     monkeypatch.setattr(command_module, "trigger_refresh", fake_trigger_refresh)
 
     with TestClient(app) as client:
         response = client.post(
             "/command",
-            json={"command": "turn_on", "device_id": "plug-1", "args": {"transition": 1}},
+            json={
+                "command": "turn_on",
+                "device_id": "plug-1",
+                "args": {"transition": 1},
+            },
         )
 
     assert response.status_code == 200
@@ -427,12 +636,16 @@ def test_tp_link_config_apply_still_succeeds_when_initial_refresh_fails(
 ) -> None:
     reset_runtime_state()
 
-    async def failing_fetch_device_state(*, host: str, username=None, password=None) -> dict[str, object]:
+    async def failing_fetch_device_state(
+        *, host: str, username=None, password=None
+    ) -> dict[str, object]:
         raise RuntimeError("device unavailable")
 
     monkeypatch.setattr(config_module.event_client, "core_base_url", mock_core.base_url)
     monkeypatch.setattr(config_module, "fetch_device_state", failing_fetch_device_state)
-    monkeypatch.setattr(config_module, "start_device_poll_task", lambda **kwargs: _DummyTask())
+    monkeypatch.setattr(
+        config_module, "start_device_poll_task", lambda **kwargs: _DummyTask()
+    )
 
     payload = build_config_payload(
         config_id="plug-1",
@@ -443,7 +656,9 @@ def test_tp_link_config_apply_still_succeeds_when_initial_refresh_fails(
             "alias": "Desk Plug",
         },
     )
-    headers = build_runtime_headers(container_id="runtime-123", internal_token="secret-token")
+    headers = build_runtime_headers(
+        container_id="runtime-123", internal_token="secret-token"
+    )
 
     with TestClient(app) as client:
         response = client.post("/config", json=payload, headers=headers)
@@ -459,7 +674,10 @@ def test_tp_link_config_apply_still_succeeds_when_initial_refresh_fails(
         )
 
     assert registry.get("plug-1") is not None
-    assert (configured_event.json_body.get("event_type") or configured_event.json_body.get("type")) == "device.configured"
+    assert (
+        configured_event.json_body.get("event_type")
+        or configured_event.json_body.get("type")
+    ) == "device.configured"
 
 
 @pytest.mark.parametrize("path", ["/ui", "/ui-config"])
@@ -496,7 +714,9 @@ def test_tp_link_ui_schema_contains_expected_fields(field_name: str) -> None:
         ("post", "/discovery"),
     ],
 )
-def test_tp_link_discovery_aliases_return_devices(method: str, path: str, monkeypatch) -> None:
+def test_tp_link_discovery_aliases_return_devices(
+    method: str, path: str, monkeypatch
+) -> None:
     reset_runtime_state()
 
     async def fake_discover_devices(username=None, password=None):
@@ -526,7 +746,9 @@ def test_tp_link_discovery_post_passes_credentials(monkeypatch) -> None:
     monkeypatch.setattr(discovery_module, "discover_devices", fake_discover_devices)
 
     with TestClient(app) as client:
-        response = client.post("/discover", json={"username": "user", "password": "pass"})
+        response = client.post(
+            "/discover", json={"username": "user", "password": "pass"}
+        )
 
     assert response.status_code == 200
     assert observed == {"username": "user", "password": "pass"}
@@ -586,7 +808,9 @@ def test_tp_link_targeted_discovery_uses_host_hint(monkeypatch) -> None:
         raise AssertionError("broadcast discovery should not run when host is provided")
 
     monkeypatch.setattr(kasa_client_module, "_resolve_device", fake_resolve_device)
-    monkeypatch.setattr(kasa_client_module.Discover, "discover", failing_broadcast_discover)
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover", failing_broadcast_discover
+    )
 
     devices = asyncio.run(
         kasa_client_module.discover_devices(
@@ -599,15 +823,164 @@ def test_tp_link_targeted_discovery_uses_host_hint(monkeypatch) -> None:
     assert observed == {"host": "10.0.0.227", "username": "user", "password": "pass"}
     assert devices[0]["host"] == "192.168.1.25"
     assert devices[0]["name"] == "Desk Plug"
+    assert device.disconnect_calls == 1
 
 
-def test_tp_link_broadcast_discovery_reports_host_hint_on_scan_failure(monkeypatch) -> None:
+def test_tp_link_fetch_device_state_disconnects_after_serializing(monkeypatch) -> None:
+    reset_runtime_state()
+    device = _FakeKasaDevice(_FakeFeature())
+
+    async def fake_resolve_device(*, host: str, username=None, password=None):
+        return device
+
+    monkeypatch.setattr(kasa_client_module, "_resolve_device", fake_resolve_device)
+
+    state = asyncio.run(kasa_client_module.fetch_device_state(host="10.0.0.227"))
+
+    assert state["host"] == "192.168.1.25"
+    assert device.disconnect_calls == 1
+
+
+def test_tp_link_resolve_device_prefers_direct_connect_for_targeted_host(
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+    observed_host: str | None = None
+    observed_timeout: int | None = None
+    observed_username: str | None = None
+    observed_password: str | None = None
+    device = _FakeKasaDevice(_FakeFeature())
+
+    async def fake_try_connect_all(host, *, timeout=None, credentials=None, **kwargs):
+        nonlocal observed_host, observed_timeout, observed_username, observed_password
+        observed_host = host
+        observed_timeout = timeout
+        observed_username = credentials.username if credentials else None
+        observed_password = credentials.password if credentials else None
+        return device
+
+    async def failing_discover_single(*args, **kwargs):
+        raise AssertionError(
+            "discover_single should not run when direct connect succeeds"
+        )
+
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "try_connect_all", fake_try_connect_all
+    )
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover_single", failing_discover_single
+    )
+
+    resolved = asyncio.run(
+        kasa_client_module._resolve_device(
+            host="10.0.0.227",
+            username="user@example.com",
+            password="secret-pass",
+        )
+    )
+
+    assert resolved is device
+    assert observed_host == "10.0.0.227"
+    assert observed_timeout == kasa_client_module._DIRECT_CONNECT_TIMEOUT
+    assert observed_username == "user@example.com"
+    assert observed_password == "secret-pass"
+
+
+def test_tp_link_resolve_device_uses_cached_config_after_success(monkeypatch) -> None:
+    reset_runtime_state()
+    first_device = _FakeKasaDevice(_FakeFeature())
+    cached_config = first_device.config
+    second_device = _FakeKasaDevice(_FakeFeature())
+    try_connect_all_calls = 0
+    seen_cached_config = None
+
+    async def fake_try_connect_all(host, *, timeout=None, credentials=None, **kwargs):
+        nonlocal try_connect_all_calls
+        try_connect_all_calls += 1
+        return first_device
+
+    async def fake_device_connect(*, config):
+        nonlocal seen_cached_config
+        seen_cached_config = config
+        return second_device
+
+    async def failing_discover_single(*args, **kwargs):
+        raise AssertionError(
+            "discover_single should not run when direct connect succeeds"
+        )
+
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "try_connect_all", fake_try_connect_all
+    )
+    monkeypatch.setattr(kasa_client_module.Device, "connect", fake_device_connect)
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover_single", failing_discover_single
+    )
+
+    first_resolved = asyncio.run(kasa_client_module._resolve_device(host="10.0.0.227"))
+    second_resolved = asyncio.run(kasa_client_module._resolve_device(host="10.0.0.227"))
+
+    assert first_resolved is first_device
+    assert second_resolved is second_device
+    assert try_connect_all_calls == 1
+    assert seen_cached_config is cached_config
+
+
+def test_tp_link_resolve_device_disconnects_when_initial_update_fails(
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+    device = _FakeKasaDevice(_FakeFeature(), update_error=RuntimeError("update failed"))
+
+    async def fake_try_connect_all(*args, **kwargs):
+        return None
+
+    async def fake_discover_single(*args, **kwargs):
+        return device
+
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "try_connect_all", fake_try_connect_all
+    )
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover_single", fake_discover_single
+    )
+
+    with pytest.raises(RuntimeError, match="update failed"):
+        asyncio.run(kasa_client_module.fetch_device_state(host="10.0.0.227"))
+
+    assert device.disconnect_calls == 1
+
+
+def test_tp_link_broadcast_discovery_disconnects_failed_devices(monkeypatch) -> None:
+    reset_runtime_state()
+    device = _FakeKasaDevice(_FakeFeature(), update_error=RuntimeError("read failed"))
+
+    async def fake_broadcast_discover(**kwargs):
+        return {"10.0.0.227": device}
+
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover", fake_broadcast_discover
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Discovered devices, but none could be read"
+    ):
+        asyncio.run(kasa_client_module.discover_devices())
+
+    assert device.disconnect_calls == 1
+
+
+def test_tp_link_broadcast_discovery_reports_host_hint_on_scan_failure(
+    monkeypatch,
+) -> None:
     reset_runtime_state()
 
     async def failing_broadcast_discover(**kwargs):
         raise RuntimeError("No time zone found with key EST")
 
-    monkeypatch.setattr(kasa_client_module.Discover, "discover", failing_broadcast_discover)
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover", failing_broadcast_discover
+    )
 
     with pytest.raises(RuntimeError) as exc_info:
         asyncio.run(kasa_client_module.discover_devices())
@@ -636,7 +1009,9 @@ def test_tp_link_events_list_is_empty_by_default() -> None:
         ("tp_link.device.ping", {"host": "10.0.0.227"}),
     ],
 )
-def test_tp_link_events_route_round_trip_variants(event_type: str, payload: dict[str, object]) -> None:
+def test_tp_link_events_route_round_trip_variants(
+    event_type: str, payload: dict[str, object]
+) -> None:
     reset_runtime_state()
 
     with TestClient(app) as client:
@@ -707,7 +1082,13 @@ def test_tp_link_entities_route_returns_device_specific_commands() -> None:
     registry.update_state(
         "plug-1",
         {
-            "capabilities": ["switch", "power", "energy_power", "energy_today", "energy_this_month"],
+            "capabilities": [
+                "switch",
+                "power",
+                "energy_power",
+                "energy_today",
+                "energy_this_month",
+            ],
             "device_type": "DeviceType.Plug",
             "model": "KP115",
             "is_on": True,
@@ -788,6 +1169,7 @@ def test_dynamic_feature_command_sets_writable_feature(monkeypatch) -> None:
     )
 
     assert feature.value is False
+    assert device.disconnect_calls == 1
 
 
 def test_tp_link_state_returns_404_for_unknown_explicit_device() -> None:
@@ -804,13 +1186,17 @@ def test_tp_link_deconfigure_returns_false_when_device_missing() -> None:
     reset_runtime_state()
 
     with TestClient(app) as client:
-        response = client.post("/deconfigure", json={"config": {"id": "missing-device"}})
+        response = client.post(
+            "/deconfigure", json={"config": {"id": "missing-device"}}
+        )
 
     assert response.status_code == 200
     assert response.json()["removed"] is False
 
 
-def test_tp_link_command_uses_primary_device_when_device_id_missing(monkeypatch) -> None:
+def test_tp_link_command_uses_primary_device_when_device_id_missing(
+    monkeypatch,
+) -> None:
     reset_runtime_state()
     registry.set(
         "plug-1",
@@ -824,7 +1210,9 @@ def test_tp_link_command_uses_primary_device_when_device_id_missing(monkeypatch)
 
     observed: dict[str, object] = {}
 
-    async def fake_run_command_for_device(*, device_id: str, command: str, args: dict[str, object]):
+    async def fake_run_command_for_device(
+        *, device_id: str, command: str, args: dict[str, object]
+    ):
         observed["device_id"] = device_id
         observed["command"] = command
         return {"ok": True}
@@ -832,7 +1220,9 @@ def test_tp_link_command_uses_primary_device_when_device_id_missing(monkeypatch)
     async def fake_trigger_refresh(device_id: str):
         return {"device_id": device_id, "state": {"is_on": True}}
 
-    monkeypatch.setattr(command_module, "run_command_for_device", fake_run_command_for_device)
+    monkeypatch.setattr(
+        command_module, "run_command_for_device", fake_run_command_for_device
+    )
     monkeypatch.setattr(command_module, "trigger_refresh", fake_trigger_refresh)
 
     with TestClient(app) as client:
@@ -840,6 +1230,63 @@ def test_tp_link_command_uses_primary_device_when_device_id_missing(monkeypatch)
 
     assert response.status_code == 200
     assert observed["device_id"] == "plug-1"
+    assert observed["command"] == "turn_on"
+
+
+def test_tp_link_command_prefers_target_config_id_over_payload_device_id(
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+    registry.set(
+        "bulb-config",
+        {
+            "config_id": "bulb-config",
+            "device_id": "bulb-config",
+            "physical_device_id": "shared-kasa-device-id",
+            "container_id": "runtime-123",
+            "host": "10.0.0.136",
+        },
+    )
+    registry.set(
+        "plug-config",
+        {
+            "config_id": "plug-config",
+            "device_id": "plug-config",
+            "physical_device_id": "shared-kasa-device-id",
+            "container_id": "runtime-123",
+            "host": "10.0.0.227",
+        },
+    )
+
+    observed: dict[str, object] = {}
+
+    async def fake_run_command_for_device(
+        *, device_id: str, command: str, args: dict[str, object]
+    ):
+        observed["device_id"] = device_id
+        observed["command"] = command
+        return {"ok": True}
+
+    async def fake_trigger_refresh(device_id: str):
+        return {"device_id": device_id, "state": {"is_on": True}}
+
+    monkeypatch.setattr(
+        command_module, "run_command_for_device", fake_run_command_for_device
+    )
+    monkeypatch.setattr(command_module, "trigger_refresh", fake_trigger_refresh)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/command",
+            json={
+                "command": "turn_on",
+                "device_id": "shared-kasa-device-id",
+                "target": {"config_id": "bulb-config"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert observed["device_id"] == "bulb-config"
     assert observed["command"] == "turn_on"
 
 
@@ -857,13 +1304,19 @@ def test_tp_link_command_propagates_device_failure(monkeypatch) -> None:
 
     from fastapi import HTTPException
 
-    async def failing_run_command_for_device(*, device_id: str, command: str, args: dict[str, object]):
+    async def failing_run_command_for_device(
+        *, device_id: str, command: str, args: dict[str, object]
+    ):
         raise HTTPException(status_code=400, detail="Command failed")
 
-    monkeypatch.setattr(command_module, "run_command_for_device", failing_run_command_for_device)
+    monkeypatch.setattr(
+        command_module, "run_command_for_device", failing_run_command_for_device
+    )
 
     with TestClient(app) as client:
-        response = client.post("/command", json={"command": "turn_on", "device_id": "plug-1"})
+        response = client.post(
+            "/command", json={"command": "turn_on", "device_id": "plug-1"}
+        )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Command failed"

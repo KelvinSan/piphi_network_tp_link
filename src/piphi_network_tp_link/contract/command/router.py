@@ -7,13 +7,27 @@ from piphi_network_tp_link.lib.store import get_primary_device
 router = APIRouter(tags=["command"])
 
 
+def _command_target_device_id(payload: CommandRequest) -> str | None:
+    target = payload.target if isinstance(payload.target, dict) else {}
+    for value in (
+        target.get("config_id"),
+        target.get("device_id"),
+        payload.device_id,
+        payload.entity_id,
+    ):
+        candidate = str(value or "").strip()
+        if candidate:
+            return candidate
+    return None
+
+
 @router.post("/command")
 async def execute_command(payload: CommandRequest) -> dict:
     command = (payload.command or "").strip()
     if not command:
         raise HTTPException(status_code=400, detail="Missing command")
 
-    device_id = payload.device_id
+    device_id = _command_target_device_id(payload)
     if device_id is None:
         primary_device = get_primary_device()
         if primary_device is None:

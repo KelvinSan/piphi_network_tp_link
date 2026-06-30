@@ -206,6 +206,7 @@ async def get_entities() -> dict:
                 "metadata": {
                     "model": latest_state.get("model"),
                     "host": entry.get("host"),
+                    "physical_device_id": entry.get("physical_device_id"),
                 },
             }
         )

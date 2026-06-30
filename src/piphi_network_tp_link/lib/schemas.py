@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from piphi_runtime_kit_python import RuntimeConfig
 
 
@@ -13,6 +13,15 @@ class TPLinkDeviceConfig(RuntimeConfig):
     password: str | None = None
     container_id: str | None = None
     model_config = ConfigDict(extra="allow")
+
+    @field_validator("username", "password", mode="before")
+    @classmethod
+    def _ignore_masked_secret_placeholder(cls, value: Any) -> str | None:
+        if value is None or isinstance(value, str):
+            return value
+        if isinstance(value, dict) and value.get("__piphi_secret__"):
+            return None
+        return str(value)
 
 
 class DeconfigureConfig(BaseModel):
@@ -44,6 +53,7 @@ class CommandRequest(BaseModel):
     entity_id: str | None = None
     device_id: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
+    target: dict[str, Any] = Field(default_factory=dict)
 
 
 class EventRequest(BaseModel):
