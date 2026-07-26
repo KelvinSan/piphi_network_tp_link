@@ -184,7 +184,8 @@ async def fetch_and_store_state(
     username: str | None = None,
     password: str | None = None,
 ) -> dict[str, Any]:
-    previous_state = (registry.get(device_id) or {}).get("latest_state") or {}
+    device_entry = registry.get(device_id) or {}
+    previous_state = device_entry.get("latest_state") or {}
     payload = await fetch_device_state(host=host, username=username, password=password)
     latest_state = update_device_state(device_id=device_id, state=payload)
     if container_id:
@@ -192,6 +193,7 @@ async def fetch_and_store_state(
             process_state=runtime_context.process_state,
             telemetry_client=telemetry_client,
             auth_context=runtime_context.auth,
+            config_id=str(device_entry.get("config_id") or device_id),
             device_id=device_id,
             metrics=_build_telemetry_metrics(payload),
             container_id=container_id,

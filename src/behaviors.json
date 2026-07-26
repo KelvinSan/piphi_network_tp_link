@@ -1194,5 +1194,53 @@
       }
     }
   ],
-  "behaviorSchemaVersion": "integration.behaviors.v2"
+  "behaviorSchemaVersion": "integration.behaviors.v2",
+  "telemetry": {
+    "capabilityMappings": [
+      {
+        "nativeMetric": "brightness",
+        "capability": "sensor.brightness"
+      },
+      {
+        "nativeMetric": "color",
+        "capability": "sensor.color"
+      },
+      {
+        "nativeMetric": "color_temperature",
+        "capability": "sensor.color_temperature"
+      },
+      {
+        "nativeMetric": "dynamic_feature",
+        "capability": "sensor.dynamic_feature"
+      },
+      {
+        "nativeMetric": "energy_power",
+        "capability": "sensor.energy_power"
+      },
+      {
+        "nativeMetric": "energy_this_month",
+        "capability": "sensor.energy_this_month"
+      },
+      {
+        "nativeMetric": "energy_today",
+        "capability": "sensor.energy_today"
+      },
+      {
+        "nativeMetric": "humidity",
+        "capability": "sensor.humidity"
+      },
+      {
+        "nativeMetric": "power",
+        "capability": "sensor.power"
+      },
+      {
+        "nativeMetric": "switch",
+        "capability": "sensor.switch"
+      },
+      {
+        "nativeMetric": "temperature",
+        "capability": "sensor.temperature"
+      }
+    ]
+  }
 }
