@@ -17,7 +17,7 @@ PyPI.
 
 ## Runtime SDK and testkit
 
-- runtime SDK: `piphi-runtime-kit-python==0.5.0`
+- runtime SDK: `piphi-runtime-kit-python==0.6.0`
 - test helper during development: `piphi-runtime-testkit-python==0.1.3`
 
 The runtime kit and testkit are installed from PyPI, so CI and release installs

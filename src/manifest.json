@@ -258,10 +258,9 @@
       "kind": "action",
       "dashboard": {
         "allowed_widgets": [
-          "button",
-          "form"
+          "button"
         ],
-        "default_widget": "form"
+        "default_widget": "button"
       }
     },
     "energy_power": {
