@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
+from pathlib import Path
 import time
 
 import pytest
@@ -25,6 +27,22 @@ discovery_module = importlib.import_module(
     "piphi_network_tp_link.contract.discovery.discovery"
 )
 kasa_client_module = importlib.import_module("piphi_network_tp_link.lib.kasa_client")
+
+
+def test_tp_link_automation_registry_matches_declared_behavior_commands() -> None:
+    behaviors_path = Path(__file__).resolve().parents[1] / "src" / "behaviors.json"
+    behaviors = json.loads(behaviors_path.read_text(encoding="utf-8"))
+    declared_commands = {
+        action["runtime"]["command"]
+        for device in behaviors["devices"]
+        for action in device.get("actions", [])
+    }
+    registered_commands = {
+        definition.command
+        for definition in command_module.automation_registry.action_definitions
+    }
+
+    assert registered_commands == declared_commands
 
 
 class _DummyTask:
@@ -628,6 +646,52 @@ def test_tp_link_command_runs_device_command_and_returns_refreshed_state(
     assert response.json()["status"] == "ok"
     assert response.json()["result"]["command"] == "turn_on"
     assert response.json()["state"]["state"]["is_on"] is True
+
+
+def test_tp_link_command_replays_idempotency_key_without_repeating_device_effect(
+    monkeypatch,
+) -> None:
+    reset_runtime_state()
+    calls = 0
+
+    async def fake_run_command_for_device(
+        *, device_id: str, command: str, args: dict[str, object]
+    ):
+        nonlocal calls
+        calls += 1
+        return {"ok": True, "command": command, "args": args}
+
+    async def fake_trigger_refresh(device_id: str):
+        return {"device_id": device_id, "state": {"is_on": True}}
+
+    registry.set(
+        "plug-idempotency-1",
+        {
+            "config_id": "plug-idempotency-1",
+            "device_id": "plug-idempotency-1",
+            "container_id": "runtime-123",
+            "host": "10.0.0.227",
+        },
+    )
+    monkeypatch.setattr(
+        command_module, "run_command_for_device", fake_run_command_for_device
+    )
+    monkeypatch.setattr(command_module, "trigger_refresh", fake_trigger_refresh)
+
+    headers = {"X-PiPhi-Idempotency-Key": "tp-link-action-idempotency-1"}
+    payload = {
+        "command": "turn_on",
+        "device_id": "plug-idempotency-1",
+    }
+    with TestClient(app) as client:
+        first = client.post("/command", json=payload, headers=headers)
+        replay = client.post("/command", json=payload, headers=headers)
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert first.json()["replayed"] is False
+    assert replay.json()["replayed"] is True
+    assert calls == 1
 
 
 def test_tp_link_config_apply_still_succeeds_when_initial_refresh_fails(
