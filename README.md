@@ -17,7 +17,7 @@ PyPI.
 
 ## Runtime SDK and testkit
 
-- runtime SDK: `piphi-runtime-kit-python==0.6.0`
+- runtime SDK: `piphi-runtime-kit-python==0.7.1`
 - test helper during development: `piphi-runtime-testkit-python==0.1.3`
 
 The runtime kit and testkit are installed from PyPI, so CI and release installs
@@ -71,6 +71,13 @@ supports these optional inputs:
 
 Those values are meant to be provided by the PiPhi UI, not hardcoded in source
 control.
+
+Automatic discovery scans each physical private IPv4 network independently.
+This keeps a VPN or another default route from swallowing the UDP discovery
+broadcast. For unusual VLAN or routed-network setups, operators can provide a
+comma-separated list of broadcast addresses with
+`PIPHI_TP_LINK_DISCOVERY_TARGETS` (for example,
+`10.0.0.255,192.168.50.255`).
 
 ## Polling behavior
 

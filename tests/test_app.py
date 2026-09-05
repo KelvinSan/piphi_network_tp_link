@@ -1017,13 +1017,18 @@ def test_tp_link_resolve_device_disconnects_when_initial_update_fails(
 
 def test_tp_link_broadcast_discovery_disconnects_failed_devices(monkeypatch) -> None:
     reset_runtime_state()
-    device = _FakeKasaDevice(_FakeFeature(), update_error=RuntimeError("read failed"))
+    device = _FakeKasaDevice(_FakeFeature())
 
     async def fake_broadcast_discover(**kwargs):
         return {"10.0.0.227": device}
 
     monkeypatch.setattr(
         kasa_client_module.Discover, "discover", fake_broadcast_discover
+    )
+    monkeypatch.setattr(
+        kasa_client_module,
+        "_serialize_device",
+        lambda _device: (_ for _ in ()).throw(RuntimeError("read failed")),
     )
 
     with pytest.raises(
@@ -1032,6 +1037,51 @@ def test_tp_link_broadcast_discovery_disconnects_failed_devices(monkeypatch) -> 
         asyncio.run(kasa_client_module.discover_devices())
 
     assert device.disconnect_calls == 1
+
+
+def test_tp_link_discovery_uses_each_detected_lan_broadcast(monkeypatch) -> None:
+    reset_runtime_state()
+    device = _FakeKasaDevice(_FakeFeature())
+    observed_targets: list[str] = []
+
+    monkeypatch.delenv(kasa_client_module._DISCOVERY_TARGETS_ENV, raising=False)
+    monkeypatch.setattr(
+        kasa_client_module,
+        "_linux_interface_networks",
+        lambda: [
+            kasa_client_module.ipaddress.ip_network("10.0.0.0/24"),
+            kasa_client_module.ipaddress.ip_network("192.168.50.0/24"),
+        ],
+    )
+
+    async def fake_broadcast_discover(**kwargs):
+        observed_targets.append(kwargs["target"])
+        if kwargs["target"] == "10.0.0.255":
+            return {"10.0.0.227": device}
+        return {}
+
+    monkeypatch.setattr(
+        kasa_client_module.Discover, "discover", fake_broadcast_discover
+    )
+
+    devices = asyncio.run(kasa_client_module.discover_devices())
+
+    assert observed_targets == ["10.0.0.255", "192.168.50.255"]
+    assert devices[0]["host"] == "192.168.1.25"
+    assert device.update_calls == 0
+    assert device.disconnect_calls == 1
+
+
+def test_tp_link_discovery_target_override_is_deduplicated(monkeypatch) -> None:
+    monkeypatch.setenv(
+        kasa_client_module._DISCOVERY_TARGETS_ENV,
+        "10.0.0.255, 192.168.1.255,10.0.0.255",
+    )
+
+    assert kasa_client_module._discovery_targets() == [
+        "10.0.0.255",
+        "192.168.1.255",
+    ]
 
 
 def test_tp_link_broadcast_discovery_reports_host_hint_on_scan_failure(

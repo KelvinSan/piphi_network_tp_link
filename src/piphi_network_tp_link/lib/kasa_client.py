@@ -1,12 +1,84 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
+import ipaddress
+import os
+import socket
+import struct
 from typing import Any
 
 from kasa import Credentials, Device, Discover
 
 _DIRECT_CONNECT_TIMEOUT = 10
+_DISCOVERY_TIMEOUT = 8
+_DISCOVERY_PACKETS = 5
+_DISCOVERY_TARGETS_ENV = "PIPHI_TP_LINK_DISCOVERY_TARGETS"
 _DEVICE_CONFIG_CACHE: dict[str, Any] = {}
+
+
+def _linux_interface_networks() -> list[ipaddress.IPv4Network]:
+    """Return usable private IPv4 networks without depending on OS tools."""
+    try:
+        import fcntl
+    except ImportError:
+        return []
+
+    networks: set[ipaddress.IPv4Network] = set()
+    ignored_prefixes = (
+        "br-",
+        "docker",
+        "lo",
+        "tailscale",
+        "tap",
+        "tun",
+        "veth",
+        "virbr",
+        "wg",
+    )
+    try:
+        interfaces = socket.if_nameindex()
+    except OSError:
+        return []
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        for _, interface in interfaces:
+            if interface.lower().startswith(ignored_prefixes):
+                continue
+            request = struct.pack("256s", interface.encode("utf-8")[:15])
+            try:
+                address = socket.inet_ntoa(
+                    fcntl.ioctl(probe.fileno(), 0x8915, request)[20:24]
+                )
+                netmask = socket.inet_ntoa(
+                    fcntl.ioctl(probe.fileno(), 0x891B, request)[20:24]
+                )
+                network = ipaddress.ip_network(f"{address}/{netmask}", strict=False)
+            except (OSError, ValueError):
+                continue
+            if network.is_private and network.prefixlen < 31:
+                networks.add(network)
+
+    return sorted(
+        networks,
+        key=lambda network: (int(network.network_address), network.prefixlen),
+    )
+
+
+def _discovery_targets() -> list[str]:
+    """Choose LAN-specific broadcasts so VPN/default routes cannot swallow discovery."""
+    configured = [
+        value.strip()
+        for value in os.getenv(_DISCOVERY_TARGETS_ENV, "").split(",")
+        if value.strip()
+    ]
+    if configured:
+        return list(dict.fromkeys(configured))
+
+    targets = [
+        str(network.broadcast_address) for network in _linux_interface_networks()
+    ]
+    return list(dict.fromkeys(targets)) or ["255.255.255.255"]
 
 
 def _safe_feature_value(value: Any) -> Any:
@@ -478,23 +550,49 @@ async def discover_devices(
             await fetch_device_state(host=host, username=username, password=password)
         ]
 
-    try:
-        found = await Discover.discover(
-            discovery_timeout=10,
-            username=username,
-            password=password,
-        )
-    except Exception as exc:
+    targets = _discovery_targets()
+    scan_results = await asyncio.gather(
+        *(
+            Discover.discover(
+                target=target,
+                discovery_timeout=_DISCOVERY_TIMEOUT,
+                discovery_packets=_DISCOVERY_PACKETS,
+                username=username,
+                password=password,
+            )
+            for target in targets
+        ),
+        return_exceptions=True,
+    )
+
+    found: dict[str, Any] = {}
+    scan_failures: list[str] = []
+    for target, result in zip(targets, scan_results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        if isinstance(result, Exception):
+            scan_failures.append(f"{target}: {result}")
+            continue
+        for discovered_host, device in result.items():
+            if discovered_host in found:
+                await _disconnect_device(device)
+                continue
+            found[discovered_host] = device
+
+    if not found and len(scan_failures) == len(targets):
+        details = "; ".join(scan_failures)
         raise RuntimeError(
-            f"Network scan failed ({exc}). Try entering the device IP address or hostname for targeted discovery."
-        ) from exc
+            f"Network scan failed ({details}). Try entering the device IP address "
+            "or hostname for targeted discovery."
+        )
 
     devices: list[dict[str, Any]] = []
     failures: list[str] = []
 
     for _, device in found.items():
         try:
-            await device.update()
+            # Discover.discover returns initialized devices. A second update adds
+            # latency and can incorrectly discard a valid discovery response.
             devices.append(_serialize_device(device))
         except Exception as exc:
             host_hint = str(getattr(device, "host", "") or "unknown-host")
