@@ -370,7 +370,29 @@
         "energy_power",
         "energy_today",
         "energy_this_month"
-      ]
+      ],
+      "dashboard": {
+        "allowed_widgets": [
+          "device-control",
+          "energy-monitor",
+          "smart-plug"
+        ],
+        "default_widget": "device-control",
+        "recommended_widgets": [
+          "device-control",
+          "smart-plug",
+          "energy-monitor"
+        ]
+      }
     }
-  ]
+  ],
+  "ui": {
+    "experience_packages": [
+      {
+        "registry_id": "io.piphi.kasa-smart-home",
+        "version_range": ">=0.1,<1",
+        "auto_install": true
+      }
+    ]
+  }
 }

@@ -35,6 +35,7 @@ jobs:
         run: |
           python -m json.tool src/manifest.json >/dev/null
           python -m json.tool src/behaviors.json >/dev/null
+          python -m json.tool capabilities/device_matrix.json >/dev/null
 
       - name: Validate release script
         working-directory: current
@@ -47,6 +48,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: pytest
+
+      - name: Validate experience package
+        working-directory: current
+        run: python scripts/build_experience.py --check
 
       - name: Build Docker image
         working-directory: current

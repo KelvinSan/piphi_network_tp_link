@@ -45,6 +45,46 @@ def test_tp_link_automation_registry_matches_declared_behavior_commands() -> Non
     assert registered_commands == declared_commands
 
 
+@pytest.mark.parametrize(
+    ("device_class", "capabilities", "default_widget"),
+    [
+        ("light", ["switch", "brightness"], "device-control"),
+        ("plug", ["switch", "energy_power"], "smart-plug"),
+        ("plug", ["switch"], "device-control"),
+        ("energy", ["energy_power"], "energy-monitor"),
+        ("sensor", ["temperature", "humidity"], "environment-monitor"),
+    ],
+)
+def test_dashboard_hints_prefer_integration_owned_experiences(
+    device_class: str, capabilities: list[str], default_widget: str
+) -> None:
+    hints = importlib.import_module(
+        "piphi_network_tp_link.contract.entities.router"
+    )._dashboard_hints(device_class, capabilities)
+
+    assert hints["default_widget"] == default_widget
+    assert default_widget in hints["allowed_widgets"]
+    assert all(
+        widget in {"device-control", "energy-monitor", "smart-plug", "environment-monitor"}
+        for widget in hints["allowed_widgets"]
+    )
+
+
+def test_telemetry_metrics_promote_environment_feature_values() -> None:
+    metrics = config_module._build_telemetry_metrics(
+        {
+            "is_on": False,
+            "features": {
+                "current_temperature": {"value": 22.6},
+                "relative_humidity": {"value": "47"},
+            },
+        }
+    )
+
+    assert metrics["temperature"] == 22.6
+    assert metrics["humidity"] == 47.0
+
+
 class _DummyTask:
     def done(self) -> bool:
         return True
@@ -182,6 +222,10 @@ def test_config_apply_sends_tp_link_telemetry_and_event(
         assert event_headers["x-piphi-integration-token"] == "secret-token"
         assert telemetry_request.json_body["device_id"] == "plug-1"
         assert telemetry_request.json_body["metrics"]["current_power_w"] == 8.2
+        assert telemetry_request.json_body["metrics"]["switch"] is True
+        assert telemetry_request.json_body["metrics"]["energy_power"] == 8.2
+        assert telemetry_request.json_body["metrics"]["energy_today"] == 0.12
+        assert telemetry_request.json_body["metrics"]["energy_this_month"] == 1.34
         assert telemetry_request.json_body["units"]["current_power_w"] == "W"
         assert (
             event_request.json_body.get("event_type")

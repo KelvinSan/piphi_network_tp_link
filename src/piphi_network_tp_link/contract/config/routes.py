@@ -149,6 +149,7 @@ def _safe_float(value: Any) -> float | None:
 
 def _build_telemetry_metrics(telemetry_data: dict[str, Any]) -> dict[str, Any]:
     metrics: dict[str, Any] = {
+        "switch": bool(telemetry_data.get("is_on", False)),
         "is_on": bool(telemetry_data.get("is_on", False)),
         "device_type": telemetry_data.get("device_type"),
         "model": telemetry_data.get("model"),
@@ -160,6 +161,7 @@ def _build_telemetry_metrics(telemetry_data: dict[str, Any]) -> dict[str, Any]:
     month_kwh = _safe_float(telemetry_data.get("month_kwh"))
 
     energy = telemetry_data.get("energy") or {}
+    features = telemetry_data.get("features") or {}
     if current_power_w is None:
         current_power_w = _safe_float(energy.get("current_power_w"))
     if today_kwh is None:
@@ -168,11 +170,32 @@ def _build_telemetry_metrics(telemetry_data: dict[str, Any]) -> dict[str, Any]:
         month_kwh = _safe_float(energy.get("month_kwh"))
 
     if current_power_w is not None:
+        metrics["power"] = current_power_w
+        metrics["energy_power"] = current_power_w
         metrics["current_power_w"] = current_power_w
     if today_kwh is not None:
+        metrics["energy_today"] = today_kwh
         metrics["today_kwh"] = today_kwh
     if month_kwh is not None:
+        metrics["energy_this_month"] = month_kwh
         metrics["month_kwh"] = month_kwh
+
+    for capability, candidates in {
+        "brightness": ("brightness", "dimming"),
+        "color_temperature": ("color_temperature", "color_temp"),
+        "temperature": ("temperature",),
+        "humidity": ("humidity",),
+    }.items():
+        for feature_id, feature in features.items():
+            normalized_id = str(feature_id).strip().lower()
+            if not any(candidate in normalized_id for candidate in candidates):
+                continue
+            value = _safe_float(
+                feature.get("value") if isinstance(feature, dict) else None
+            )
+            if value is not None:
+                metrics[capability] = value
+                break
 
     return {key: value for key, value in metrics.items() if value is not None}
 
@@ -198,6 +221,12 @@ async def fetch_and_store_state(
             metrics=_build_telemetry_metrics(payload),
             container_id=container_id,
             units={
+                "brightness": "%",
+                "color_temperature": "K",
+                "power": "W",
+                "energy_power": "W",
+                "energy_today": "kWh",
+                "energy_this_month": "kWh",
                 "signal_strength": "dBm",
                 "current_power_w": "W",
                 "today_kwh": "kWh",

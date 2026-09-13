@@ -40,22 +40,44 @@ def _entity_type(device_class: str, capabilities: list[str]) -> str:
 
 
 def _dashboard_hints(device_class: str, capabilities: list[str]) -> dict[str, object]:
+    has_energy = any(
+        capability in capabilities
+        for capability in [
+            "power",
+            "energy_power",
+            "energy_today",
+            "energy_this_month",
+        ]
+    )
     if device_class in {"light", "dimmer", "strip"}:
         return {
-            "allowed_widgets": ["light-card", "tile", "button", "stat"],
-            "default_widget": "light-card",
-            "recommended_widgets": ["light-card", "tile"],
+            "allowed_widgets": ["device-control", "smart-plug", "energy-monitor"],
+            "default_widget": "device-control",
+            "recommended_widgets": [
+                "device-control",
+                *(["smart-plug", "energy-monitor"] if has_energy else []),
+            ],
         }
     if "switch" in capabilities:
         return {
-            "allowed_widgets": ["tile", "button", "stat", "line-chart"],
-            "default_widget": "tile",
-            "recommended_widgets": ["tile", "stat"],
+            "allowed_widgets": ["device-control", "smart-plug", "energy-monitor"],
+            "default_widget": "smart-plug" if has_energy else "device-control",
+            "recommended_widgets": (
+                ["smart-plug", "device-control", "energy-monitor"]
+                if has_energy
+                else ["device-control"]
+            ),
+        }
+    if any(capability in capabilities for capability in ["temperature", "humidity"]):
+        return {
+            "allowed_widgets": ["environment-monitor"],
+            "default_widget": "environment-monitor",
+            "recommended_widgets": ["environment-monitor"],
         }
     return {
-        "allowed_widgets": ["stat", "line-chart"],
-        "default_widget": "stat",
-        "recommended_widgets": ["stat"],
+        "allowed_widgets": ["energy-monitor"],
+        "default_widget": "energy-monitor",
+        "recommended_widgets": ["energy-monitor"],
     }
 
 

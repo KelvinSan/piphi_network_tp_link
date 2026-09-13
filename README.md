@@ -14,6 +14,12 @@ PyPI.
 - polls device state on a background loop
 - exposes entities, state, events, commands, and UI config endpoints
 - delivers telemetry and events to PiPhi Core through `piphi-runtime-kit-python`
+- pairs four integration-owned dashboard experiences: Device Control, Energy Monitor, Smart Plug, and Environment Monitor
+
+The declared local-device scope is implementation-complete and enforced by
+`capabilities/device_matrix.json`. The automated runtime, simulator, command,
+and widget-package checks pass; validation across representative physical
+devices remains an explicit pre-GA gate.
 
 ## Runtime SDK and testkit
 
@@ -42,6 +48,18 @@ Run tests:
 ```bash
 pdm run pytest -q
 ```
+
+Validate the deterministic signed experience package without a release key:
+
+```bash
+pdm run python scripts/build_experience.py --check
+```
+
+The package source lives in `experiences/kasa-smart-home/`. Control widgets run
+inside the Widget SDK sandbox and can only execute the explicitly allow-listed
+Kasa commands after Core grants `host.executeCommand`. Energy and environment
+widgets use Core's declarative renderer. All four keep Core-owned typography, shell,
+layout, themes, source binding, and more-info/history interactions.
 
 The integration API defaults to `http://127.0.0.1:3666`.
 
@@ -101,6 +119,9 @@ The runtime supports:
 
 - `src/manifest.json` integration manifest
 - `src/behaviors.json` optional behavior metadata for PiPhi UI
+- `experiences/kasa-smart-home/` integration-owned widget package and themes
+- `capabilities/device_matrix.json` tested device-family and capability coverage
+- `scripts/build_experience.py` deterministic package builder and signer
 - `src/piphi_network_tp_link/app.py` FastAPI entrypoint
 - `src/piphi_network_tp_link/contract/` PiPhi contract routes
 - `src/piphi_network_tp_link/lib/` device and runtime helpers
