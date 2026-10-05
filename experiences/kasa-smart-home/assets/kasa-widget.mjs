@@ -1,3 +1,5 @@
+import { createOptimisticControl } from "./optimistic-control.mjs";
+
 const root = typeof document === "undefined" ? null : document.getElementById("piphi-widget-root");
 const host = typeof window === "undefined" ? null : window.PiPhiWidgetHost;
 
@@ -5,11 +7,20 @@ const state = {
   bootstrap: null,
   values: new Map(),
   error: "",
+  errorSource: "",
   pending: "",
   subscriptions: [],
   bindingScope: "",
   ready: false,
+  brightnessEditing: false,
 };
+
+const powerControl = createOptimisticControl({
+  onChange: () => { if (!state.brightnessEditing) render(); },
+});
+const brightnessControl = createOptimisticControl({
+  onChange: () => { if (!state.brightnessEditing) render(); },
+});
 
 export function normalizeBoolean(value) {
   if (typeof value === "boolean") return value;
@@ -35,6 +46,7 @@ export function statesFromEvent(event) {
       value: event.data.value,
       display_value: event.data.displayValue ?? event.data.display_value,
       unit: event.data.unit,
+      collected_at: event.data.ts ?? event.data.collected_at,
       found: true,
     }];
   }
@@ -73,13 +85,9 @@ function setting(name, fallback = true) {
   return typeof value === "boolean" ? value : fallback;
 }
 
-export function dashboardDensity(settings = state.bootstrap?.settings) {
-  return settings?.dashboard_density === "expanded" ? "expanded" : "compact";
-}
-
 function contentHeight() {
   const content = root?.querySelector(".kasa");
-  const minimum = widgetMode() === "device-control" && dashboardDensity() === "compact" ? 104 : 180;
+  const minimum = widgetMode() === "device-control" ? 128 : 180;
   return Math.max(minimum, content?.scrollHeight ?? root?.scrollHeight ?? minimum);
 }
 
@@ -92,6 +100,11 @@ function updateValues(event) {
       display: item.display_value ?? item.displayValue,
       unit: item.unit,
     });
+    const observedAt = item.collected_at ?? item.received_at;
+    if (id === "switch") powerControl.observe(normalizeBoolean(item.value), observedAt);
+    if (id === "brightness" && Number.isFinite(Number(item.value))) {
+      brightnessControl.observe(Number(item.value), observedAt);
+    }
   }
 }
 
@@ -108,15 +121,11 @@ function styles() {
   return `<style>
     .kasa { display: grid; align-content: start; min-height: 0; gap: var(--piphi-experience-gap, 10px); padding: 2px; color: var(--piphi-widget-text, #172033); }
     .kasa__hero, .kasa__tile { border: 1px solid var(--piphi-experience-tile-border, color-mix(in srgb, currentColor 14%, transparent)); background: var(--piphi-experience-tile-surface, color-mix(in srgb, currentColor 5%, transparent)); border-radius: var(--piphi-experience-radius, 16px); box-shadow: var(--piphi-experience-tile-shadow, none); }
-    .kasa__hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 82px; padding: 13px 14px; overflow: hidden; isolation: isolate; }
+    .kasa__hero { display: grid; gap: 10px; min-height: 82px; padding: 13px 14px; overflow: hidden; isolation: isolate; }
     .kasa__hero[data-active="true"] { background: linear-gradient(112deg, color-mix(in srgb, var(--piphi-experience-accent, #14b8a6) 13%, var(--piphi-experience-tile-surface, transparent)), var(--piphi-experience-tile-surface, transparent) 68%); }
-    .kasa__hero--level { position: relative; padding-bottom: 20px; }
-    .kasa__hero--level::after { position: absolute; z-index: -1; width: 92px; height: 92px; right: -28px; top: -36px; border-radius: 50%; background: color-mix(in srgb, var(--piphi-experience-accent, #14b8a6) 11%, transparent); content: ""; }
-    .kasa__level { position: absolute; right: 14px; bottom: 9px; left: 14px; height: 4px; border-radius: 999px; background: color-mix(in srgb, currentColor 14%, transparent); }
-    .kasa__level-fill { position: relative; display: block; width: var(--kasa-level); height: 100%; min-width: 4px; border-radius: inherit; background: var(--piphi-experience-accent, #14b8a6); transition: width .18s ease; }
-    .kasa__level-fill::after { position: absolute; width: 7px; height: 7px; right: -3px; top: 50%; border: 2px solid color-mix(in srgb, var(--piphi-experience-tile-surface, transparent) 82%, white); border-radius: 50%; background: var(--piphi-experience-accent, #14b8a6); box-shadow: 0 2px 7px color-mix(in srgb, var(--piphi-experience-accent, #14b8a6) 35%, transparent); content: ""; transform: translateY(-50%); }
+    .kasa__hero-main { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
     .kasa__identity { min-width: 0; flex: 1; align-self: stretch; display: grid; align-content: center; padding: 0; border: 0; background: transparent; color: inherit; text-align: start; cursor: pointer; }
-    .kasa__identity:hover .kasa__title, .kasa__slider-details:hover label { color: var(--piphi-experience-accent, #14b8a6); }
+    .kasa__identity:hover .kasa__title, .kasa__brightness-details:hover .kasa__brightness-label { color: var(--piphi-experience-accent, #14b8a6); }
     .kasa__eyebrow { margin: 0 0 5px; color: var(--piphi-widget-text-muted, #64748b); font-size: .65rem; font-weight: 800; letter-spacing: .105em; text-transform: uppercase; }
     .kasa__title { margin: 0; font-size: 1.02rem; line-height: 1.18; font-weight: 780; transition: color .16s ease; }
     .kasa__state { display: flex; align-items: center; gap: 6px; margin: 5px 0 0; color: var(--piphi-widget-text-muted, #64748b); font-size: .75rem; font-weight: 620; }
@@ -128,11 +137,11 @@ function styles() {
     .kasa__power:hover:not(:disabled) { transform: translateY(-1px) scale(1.025); box-shadow: 0 10px 24px color-mix(in srgb, var(--piphi-experience-accent, #14b8a6) 22%, transparent); }
     .kasa__power:active:not(:disabled) { transform: translateY(0) scale(.97); }
     .kasa__power:disabled { cursor: wait; opacity: .68; }
-    .kasa__slider { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px 12px; }
-    .kasa__slider-details { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 0; border: 0; background: transparent; color: inherit; text-align: start; cursor: pointer; }
-    .kasa__slider label { font-weight: 700; transition: color .16s ease; }
-    .kasa__slider output { color: var(--piphi-widget-text-muted, #64748b); font-variant-numeric: tabular-nums; }
-    .kasa__slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--piphi-experience-accent, #14b8a6); }
+    .kasa__brightness { display: grid; gap: 5px; padding-top: 9px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+    .kasa__brightness-details { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 0; border: 0; background: transparent; color: inherit; text-align: start; cursor: pointer; }
+    .kasa__brightness-label { font-size: .78rem; font-weight: 700; transition: color .16s ease; }
+    .kasa__brightness-value { color: var(--piphi-widget-text-muted, #64748b); font-size: .78rem; font-variant-numeric: tabular-nums; }
+    .kasa__brightness input { width: 100%; min-height: 18px; margin: 0; accent-color: var(--piphi-experience-accent, #14b8a6); }
     .kasa__section-title { margin: 2px 2px -2px; color: var(--piphi-widget-text-muted, #64748b); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
     .kasa__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--piphi-experience-gap, 12px); }
     .kasa__tile { min-width: 0; padding: 11px 12px; cursor: pointer; text-align: start; color: inherit; font: inherit; }
@@ -142,8 +151,8 @@ function styles() {
     .kasa__metric-value--energy { color: var(--piphi-experience-energy-accent, #d97706); }
     .kasa__message { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #dc2626 10%, transparent); color: #b91c1c; font-size: .82rem; }
     @container (max-width: 360px) { .kasa__metrics { grid-template-columns: 1fr 1fr; } .kasa__metrics > :first-child { grid-column: 1 / -1; } }
-    @container (max-width: 250px) { .kasa__hero { gap: 10px; padding-inline: 11px; } .kasa__power { width: 42px; height: 42px; flex-basis: 42px; border-radius: 13px; } .kasa__level { right: 11px; left: 11px; } }
-    @media (prefers-reduced-motion: reduce) { .kasa__power, .kasa__level span { transition: none; } }
+    @container (max-width: 250px) { .kasa__hero { gap: 8px; padding-inline: 11px; } .kasa__hero-main { gap: 10px; } .kasa__power { width: 42px; height: 42px; flex-basis: 42px; border-radius: 13px; } }
+    @media (prefers-reduced-motion: reduce) { .kasa__power { transition: none; } }
   </style>`;
 }
 
@@ -158,11 +167,9 @@ function render() {
   if (!root) return;
   const mode = widgetMode();
   const cardTarget = cardTargetForMode(mode);
-  const isOn = normalizeBoolean(value("switch"));
-  const brightness = Number(value("brightness"));
-  const density = dashboardDensity();
+  const isOn = powerControl.value ?? normalizeBoolean(value("switch"));
+  const brightness = brightnessControl.value ?? Number(value("brightness"));
   const showBrightness = mode === "device-control" && Number.isFinite(brightness);
-  const compactBrightness = showBrightness && density === "compact";
   const energy = mode === "smart-plug"
     ? `<p class="kasa__section-title">Energy use</p><div class="kasa__metrics">
         ${energyTile("energy_power", "Right now", "W", "smart-plug-energy", true)}
@@ -170,19 +177,28 @@ function render() {
         ${setting("show_month") ? energyTile("energy_this_month", "This month", "kWh", "smart-plug-energy") : ""}
       </div>`
     : "";
-  root.innerHTML = `${styles()}<section class="kasa kasa--${density}" aria-label="Kasa ${mode === "smart-plug" ? "smart plug" : "device control"}">
-    <div class="kasa__hero${compactBrightness ? " kasa__hero--level" : ""}" data-active="${isOn}">
-      <button class="kasa__identity" type="button" data-target="${cardTarget}" aria-label="View Kasa device details"><p class="kasa__eyebrow">Kasa device</p><h2 class="kasa__title">Power</h2><p class="kasa__state"><span class="kasa__state-dot" aria-hidden="true"></span><span>${isOn ? "On" : "Off"}${compactBrightness ? ` · ${Math.round(brightness)}%` : ""}</span></p></button>
-      <button class="kasa__power" type="button" aria-label="Turn ${isOn ? "off" : "on"}" aria-pressed="${isOn}" ${state.pending ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.3 5.8a8 8 0 1 0 11.4 0"></path></svg></button>
-      ${compactBrightness ? `<span class="kasa__level" style="--kasa-level: ${Math.max(0, Math.min(100, brightness))}%" aria-hidden="true"><span class="kasa__level-fill"></span></span>` : ""}
+  root.innerHTML = `${styles()}<section class="kasa" aria-label="Kasa ${mode === "smart-plug" ? "smart plug" : "device control"}">
+    <div class="kasa__hero" data-active="${isOn}">
+      <div class="kasa__hero-main">
+        <button class="kasa__identity" type="button" data-target="${cardTarget}" aria-label="View Kasa device details"><p class="kasa__eyebrow">Kasa device</p><h2 class="kasa__title">Power</h2><p class="kasa__state"><span class="kasa__state-dot" aria-hidden="true"></span><span>${isOn ? "On" : "Off"}</span></p></button>
+        <button class="kasa__power" type="button" aria-label="Turn ${isOn ? "off" : "on"}" aria-pressed="${isOn}" ${state.pending ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.3 5.8a8 8 0 1 0 11.4 0"></path></svg></button>
+      </div>
+      ${showBrightness ? `<div class="kasa__brightness"><button class="kasa__brightness-details" type="button" data-target="${cardTarget}" aria-label="View brightness details"><span class="kasa__brightness-label">Brightness</span><output class="kasa__brightness-value" for="brightness">${Math.round(brightness)}%</output></button><input id="brightness" type="range" min="0" max="100" step="1" value="${Math.round(brightness)}" aria-label="Brightness" ${state.pending ? "disabled" : ""}></div>` : ""}
     </div>
-    ${showBrightness && density === "expanded" ? `<div class="kasa__slider kasa__tile"><button class="kasa__slider-details" type="button" data-target="${cardTarget}" aria-label="View brightness details"><label for="brightness">Brightness</label><output for="brightness">${Math.round(brightness)}%</output></button><input id="brightness" type="range" min="0" max="100" step="1" value="${Math.round(brightness)}" aria-label="Brightness"></div>` : ""}
     ${energy}
     ${state.error ? `<p class="kasa__message" role="alert">${escapeHtml(state.error)}</p>` : ""}
   </section>`;
 
-  root.querySelector(".kasa__power")?.addEventListener("click", () => runCommand(commandForPower(isOn)));
-  root.querySelector("#brightness")?.addEventListener("change", (event) => runCommand("set_brightness", { brightness: Number(event.currentTarget.value) }, "brightness"));
+  root.querySelector(".kasa__power")?.addEventListener("click", () => runCommand(commandForPower(isOn), {}, "power", powerControl, !isOn));
+  root.querySelector("#brightness")?.addEventListener("input", (event) => {
+    state.brightnessEditing = true;
+    root.querySelector(".kasa__brightness-value").textContent = `${Number(event.currentTarget.value)}%`;
+  });
+  root.querySelector("#brightness")?.addEventListener("change", (event) => {
+    state.brightnessEditing = false;
+    const brightness = Number(event.currentTarget.value);
+    void runCommand("set_brightness", { brightness }, "brightness", brightnessControl, brightness);
+  });
   root.querySelectorAll("[data-target]").forEach((element) => element.addEventListener("click", () => {
     void activateTarget(element.dataset.target).catch((error) => {
       state.error = error instanceof Error ? error.message : "Unable to open device details.";
@@ -194,15 +210,20 @@ function render() {
   }
 }
 
-async function runCommand(commandName, args = {}, slotId = "power") {
+async function runCommand(commandName, args = {}, slotId = "power", control = null, target) {
   if (!host || state.pending) return;
   state.pending = commandName;
   state.error = "";
+  state.errorSource = "";
+  if (control) control.begin(target);
   render();
   try {
     await host.executeCommand({ commandName, args, slotId });
+    control?.accept();
   } catch (error) {
+    control?.reject();
     state.error = error instanceof Error ? error.message : "The device did not respond. Try again.";
+    state.errorSource = "command";
   } finally {
     state.pending = "";
     render();
@@ -225,17 +246,33 @@ async function connect(bootstrap) {
     try { await unsubscribe(); } catch { /* The host may already have released it. */ }
   }
   state.bindingScope = bindingScope;
+  state.error = "";
+  state.errorSource = "";
   state.values.clear();
+  state.brightnessEditing = false;
+  powerControl.reset();
+  brightnessControl.reset();
   for (const slot of bindings) {
     try {
       const unsubscribe = await host.subscribeState({ slotId: slot.id }, (event) => {
-        if (event?.kind === "error") state.error = event.error?.message || "Live updates are temporarily unavailable.";
-        else { state.error = ""; updateValues(event); }
-        render();
+        if (event?.kind === "error") {
+          if (state.errorSource !== "command") {
+            state.error = event.error?.message || "Live updates are temporarily unavailable.";
+            state.errorSource = "stream";
+          }
+        } else {
+          if (state.errorSource === "stream") {
+            state.error = "";
+            state.errorSource = "";
+          }
+          updateValues(event);
+        }
+        if (!state.brightnessEditing) render();
       });
       state.subscriptions.push(unsubscribe);
     } catch (error) {
       state.error = error instanceof Error ? error.message : "Unable to load device state.";
+      state.errorSource = "stream";
       render();
     }
   }

@@ -93,6 +93,16 @@ def test_package_contains_control_energy_stacked_and_environment_widgets() -> No
         "sandboxed_bundle",
         "declarative",
     ]
+    for widget in source["widgets"]:
+        certification = widget["certification"]
+        expected = {
+            "runtime", "persistence", "binding", "states", "responsive",
+            "themes", "accessibility", "save-reload", "performance",
+        }
+        if widget.get("allowed_commands"):
+            expected.add("commands")
+        assert set(certification["verified_gates"]) == expected
+        assert set(certification["evidence"]) == expected
 
 
 def test_bindings_match_runtime_capabilities_and_are_device_scoped() -> None:
@@ -162,14 +172,15 @@ def test_sandbox_widget_has_accessible_responsive_loading_and_error_paths() -> N
     assert "—" in source
 
 
-def test_device_control_is_compact_theme_safe_and_opens_core_details() -> None:
+def test_device_control_is_one_compact_theme_safe_surface_and_opens_core_details() -> None:
     source = ENTRY.read_text(encoding="utf-8")
     assert "min-height: 0" in source
     assert "min-height: 82px" in source
     assert "width: 46px; height: 46px" in source
     assert 'data-active="${isOn}"' in source
     assert 'class="kasa__state-dot"' in source
-    assert 'class="kasa__level-fill"' in source
+    assert 'class="kasa__hero-main"' in source
+    assert 'class="kasa__brightness"' in source
     assert 'data-target="${cardTarget}"' in source
     assert 'aria-label="View Kasa device details"' in source
     assert 'aria-label="View brightness details"' in source
@@ -178,47 +189,26 @@ def test_device_control_is_compact_theme_safe_and_opens_core_details() -> None:
     assert "background: #" not in source
     assert "--piphi-widget-muted-text" not in source
     assert "--piphi-widget-text-muted" in source
-    assert 'class="kasa__level"' in source
-    assert 'density === "expanded"' in source
+    assert 'class="kasa__slider' not in source
+    assert "dashboardDensity" not in source
 
 
-def test_device_control_defaults_to_compact_density_with_an_expanded_option() -> None:
+def test_device_control_only_supports_the_unified_glanceable_presentation() -> None:
     widget = next(
         item for item in _source()["widgets"] if item["id"] == "device-control"
     )
     assert widget["default_column_span"] == 4
     assert widget["default_row_span"] == 3
-    assert widget["settings_schema_version"] == "2"
-    assert widget["settings"] == [
-        {
-            "id": "dashboard_density",
-            "type": "select",
-            "label": "Dashboard density",
-            "description": "Compact is recommended. Expanded controls use the extra space to keep brightness visible.",
-            "default": "compact",
-            "options": [
-                {
-                    "label": "Compact (recommended)",
-                    "value": "compact",
-                    "recommended_column_span": 4,
-                    "recommended_row_span": 3,
-                },
-                {
-                    "label": "Expanded controls",
-                    "value": "expanded",
-                    "recommended_column_span": 4,
-                    "recommended_row_span": 5,
-                },
-            ],
-        }
-    ]
+    assert widget["settings_schema_version"] == "3"
+    assert widget["settings"] == []
     assert widget["settings_migrations"] == [
         {
             "from": "1",
             "to": "2",
             "defaults": {"dashboard_density": "compact"},
             "remove": ["show_brightness"],
-        }
+        },
+        {"from": "2", "to": "3", "remove": ["dashboard_density"]},
     ]
 
 
@@ -247,7 +237,7 @@ def test_browser_helpers_cover_empty_snapshot_points_and_power_commands() -> Non
     if node is None:
         pytest.skip("Node.js is not installed")
     script = f"""
-      import {{ activateTarget, cardTargetForMode, commandForPower, dashboardDensity, formatReading, statesFromEvent }} from {json.dumps(ENTRY.as_uri())};
+      import {{ activateTarget, cardTargetForMode, commandForPower, formatReading, statesFromEvent }} from {json.dumps(ENTRY.as_uri())};
       const interactions = [];
       await activateTarget(cardTargetForMode('device-control'), {{activateInteraction: async (targetId) => interactions.push(targetId)}});
       await activateTarget(cardTargetForMode('smart-plug'), {{activateInteraction: async (targetId) => interactions.push(targetId)}});
@@ -258,8 +248,6 @@ def test_browser_helpers_cover_empty_snapshot_points_and_power_commands() -> Non
         snapshot: statesFromEvent({{kind: 'snapshot', data: {{states: [{{capability_id: 'switch', value: true}}]}}}}),
         point: statesFromEvent({{kind: 'point', data: {{capabilityId: 'energy_power', value: 12.5, unit: 'W'}}}}),
         interactions,
-        compactDensity: dashboardDensity({{}}),
-        expandedDensity: dashboardDensity({{dashboard_density: 'expanded'}}),
       }};
       process.stdout.write(JSON.stringify(result));
     """
@@ -276,8 +264,181 @@ def test_browser_helpers_cover_empty_snapshot_points_and_power_commands() -> Non
     assert result["snapshot"][0]["capability_id"] == "switch"
     assert result["point"][0]["capability_id"] == "energy_power"
     assert result["interactions"] == ["device-card", "smart-plug-card"]
-    assert result["compactDensity"] == "compact"
-    assert result["expandedDensity"] == "expanded"
+
+
+def test_brightness_slider_keeps_the_chosen_value_until_state_confirms_it() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    script = f"""
+      import assert from 'node:assert/strict';
+      const subscriptions = new Map();
+      let finishCommand;
+      let failCommand;
+      const root = {{
+        slider: null,
+        output: null,
+        set innerHTML(html) {{
+          this.html = html;
+          const level = html.match(/<input id="brightness"[^>]* value="(\\d+)"/);
+          this.slider = level ? {{
+            value: level[1],
+            handlers: {{}},
+            addEventListener(type, callback) {{ this.handlers[type] = callback; }},
+          }} : null;
+          const display = html.match(/class="kasa__brightness-value"[^>]*>(\\d+)%/);
+          this.output = display ? {{ textContent: `${{display[1]}}%` }} : null;
+        }},
+        querySelector(selector) {{
+          if (selector === '#brightness') return this.slider;
+          if (selector === '.kasa__brightness-value') return this.output;
+          if (selector === '.kasa') return {{ scrollHeight: 128 }};
+          if (selector === '.kasa__power') return {{ addEventListener() {{}} }};
+          return null;
+        }},
+        querySelectorAll() {{ return []; }},
+      }};
+      globalThis.document = {{ getElementById: () => root }};
+      globalThis.window = {{ PiPhiWidgetHost: {{
+        subscribe(callback) {{ callback({{
+          package: {{ id: 'kasa-smart-home/device-control' }},
+          bindings: [{{ id: 'brightness', binding: {{ configId: 'test' }} }}],
+        }}); }},
+        ready: async () => {{}},
+        setHeight: async () => {{}},
+        subscribeState: async (options, callback) => {{
+          subscriptions.set(options.slotId, callback);
+          return async () => {{}};
+        }},
+        executeCommand: () => new Promise((resolve, reject) => {{
+          finishCommand = resolve;
+          failCommand = reject;
+        }}),
+      }} }};
+      await import({json.dumps(ENTRY.as_uri())});
+      await new Promise((resolve) => setImmediate(resolve));
+      const emit = (value) => subscriptions.get('brightness')({{
+        kind: 'point', data: {{ capabilityId: 'brightness', value }},
+      }});
+      const move = (value) => {{
+        const slider = root.slider;
+        slider.value = String(value);
+        slider.handlers.input({{ currentTarget: slider }});
+        return slider;
+      }};
+      const release = () => root.slider.handlers.change({{ currentTarget: root.slider }});
+
+      emit(98);
+      const draggedSlider = move(60);
+      assert.equal(root.output.textContent, '60%');
+      emit(98);
+      assert.equal(root.slider, draggedSlider, 'stale updates must not replace the slider during drag');
+      assert.equal(root.output.textContent, '60%');
+      release();
+      assert.equal(root.slider.value, '60');
+      emit(98);
+      assert.equal(root.slider.value, '60', 'stale state must not snap the slider back');
+      finishCommand();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(root.slider.value, '60');
+      emit(60);
+      assert.equal(root.output.textContent, '60%');
+
+      move(35);
+      release();
+      assert.equal(root.slider.value, '35');
+      failCommand(new Error('Device rejected brightness change'));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(root.slider.value, '60', 'failed commands restore the last confirmed state');
+      assert.match(root.html, /Device rejected brightness change/);
+    """
+    subprocess.run(
+        [node, "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_power_changes_immediately_and_stale_readings_do_not_flicker() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    script = f"""
+      import assert from 'node:assert/strict';
+      const subscriptions = new Map();
+      let finishCommand;
+      let failCommand;
+      const root = {{
+        power: null,
+        set innerHTML(html) {{
+          this.html = html;
+          this.power = {{
+            handlers: {{}},
+            addEventListener(type, callback) {{ this.handlers[type] = callback; }},
+          }};
+        }},
+        querySelector(selector) {{
+          if (selector === '.kasa__power') return this.power;
+          if (selector === '.kasa') return {{ scrollHeight: 128 }};
+          return null;
+        }},
+        querySelectorAll() {{ return []; }},
+      }};
+      globalThis.document = {{ getElementById: () => root }};
+      globalThis.window = {{ PiPhiWidgetHost: {{
+        subscribe(callback) {{ callback({{
+          package: {{ id: 'kasa-smart-home/device-control' }},
+          bindings: [{{ id: 'power', binding: {{ configId: 'test' }} }}],
+        }}); }},
+        ready: async () => {{}},
+        setHeight: async () => {{}},
+        subscribeState: async (options, callback) => {{
+          subscriptions.set(options.slotId, callback);
+          return async () => {{}};
+        }},
+        executeCommand: () => new Promise((resolve, reject) => {{
+          finishCommand = resolve;
+          failCommand = reject;
+        }}),
+      }} }};
+      await import({json.dumps(ENTRY.as_uri())});
+      await new Promise((resolve) => setImmediate(resolve));
+      const staleAt = new Date(Date.now() - 5000).toISOString();
+      const freshAt = () => new Date(Date.now() + 1000).toISOString();
+      const emit = (value, ts) => subscriptions.get('power')({{
+        kind: 'point', data: {{ capabilityId: 'switch', value, ts }},
+      }});
+      const press = () => root.power.handlers.click();
+
+      emit(false, staleAt);
+      assert.match(root.html, /data-active="false"/);
+      press();
+      assert.match(root.html, /data-active="true"/);
+      assert.match(root.html, /aria-pressed="true"/);
+      emit(false, staleAt);
+      assert.match(root.html, /data-active="true"/, 'stale readings do not undo a pending command');
+      finishCommand();
+      await new Promise((resolve) => setImmediate(resolve));
+      emit(false, staleAt);
+      assert.match(root.html, /data-active="true"/, 'stale readings do not undo an accepted command');
+      emit(true, freshAt());
+      assert.match(root.html, /data-active="true"/);
+      assert.doesNotMatch(root.html, /Toggle sent|Just now|could not be confirmed/);
+
+      press();
+      assert.match(root.html, /data-active="false"/);
+      failCommand(new Error('Device rejected power change'));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.match(root.html, /data-active="true"/, 'failure restores the confirmed state');
+      assert.match(root.html, /Device rejected power change/);
+    """
+    subprocess.run(
+        [node, "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_signed_build_is_deterministic_and_contains_assets_once(tmp_path: Path) -> None:
@@ -296,6 +457,7 @@ def test_signed_build_is_deterministic_and_contains_assets_once(tmp_path: Path) 
         assert package.namelist() == [
             "package.source.json",
             "assets/kasa-widget.mjs",
+            "assets/optimistic-control.mjs",
             "themes/kasa.css",
             "themes/quiet.css",
         ]
