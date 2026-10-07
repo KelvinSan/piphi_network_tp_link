@@ -48,7 +48,11 @@
           ],
           "runtime": {
             "source": "state",
-            "field": "power_state",
+            "field": "is_on",
+            "fieldAliases": [
+              "power_state",
+              "switch"
+            ],
             "operator": "eq"
           },
           "freshness": {
@@ -180,7 +184,11 @@
           ],
           "runtime": {
             "source": "state",
-            "field": "signal",
+            "field": "signal_strength",
+            "fieldAliases": [
+              "signal",
+              "rssi"
+            ],
             "operator": ">"
           },
           "freshness": {
@@ -268,7 +276,11 @@
           ],
           "runtime": {
             "source": "state",
-            "field": "energy",
+            "field": "energy_today",
+            "fieldAliases": [
+              "energy",
+              "today_kwh"
+            ],
             "operator": ">"
           },
           "freshness": {
@@ -1119,7 +1131,7 @@
         "conditionTree": {
           "id": "device_is_off",
           "label": "Device is off",
-          "field": "power_state",
+          "field": "is_on",
           "operator": "eq",
           "value": false,
           "sourceRef": {

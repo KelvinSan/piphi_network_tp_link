@@ -45,6 +45,39 @@ def test_tp_link_automation_registry_matches_declared_behavior_commands() -> Non
     assert registered_commands == declared_commands
 
 
+def test_tp_link_static_behavior_conditions_use_emitted_telemetry_fields() -> None:
+    behaviors_path = Path(__file__).resolve().parents[1] / "src" / "behaviors.json"
+    behaviors = json.loads(behaviors_path.read_text(encoding="utf-8"))
+    emitted_metrics = config_module._build_telemetry_metrics(
+        {
+            "is_on": True,
+            "device_type": "DeviceType.Plug",
+            "model": "KP125M",
+            "signal_strength": -42,
+            "current_power_w": 8.2,
+            "today_kwh": 0.12,
+            "month_kwh": 1.34,
+        }
+    )
+    dynamic_condition_ids = {"feature_equals", "feature_in_range"}
+    declared_fields = {
+        condition["runtime"]["field"]
+        for device in behaviors["devices"]
+        for condition in device.get("conditions", [])
+        if condition["id"] not in dynamic_condition_ids
+    }
+
+    assert declared_fields <= emitted_metrics.keys()
+
+    template_fields = {
+        template["config"]["conditionTree"]["field"]
+        for template in behaviors.get("templates", [])
+        if isinstance(template.get("config", {}).get("conditionTree"), dict)
+        and template["config"]["conditionTree"].get("field")
+    }
+    assert template_fields <= emitted_metrics.keys()
+
+
 @pytest.mark.parametrize(
     ("device_class", "capabilities", "default_widget"),
     [
