@@ -27,6 +27,7 @@ discovery_module = importlib.import_module(
     "piphi_network_tp_link.contract.discovery.discovery"
 )
 kasa_client_module = importlib.import_module("piphi_network_tp_link.lib.kasa_client")
+state_module = importlib.import_module("piphi_network_tp_link.contract.state.router")
 
 
 def test_tp_link_automation_registry_matches_declared_behavior_commands() -> None:
@@ -630,6 +631,43 @@ def test_state_returns_404_when_no_tp_link_device_is_configured() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No configured device found"
+
+
+def test_tp_link_state_refresh_requires_and_echoes_request_id(monkeypatch) -> None:
+    reset_runtime_state()
+    registry.set(
+        "plug-1",
+        {
+            "config_id": "config-1",
+            "device_id": "plug-1",
+            "host": "192.168.1.25",
+        },
+    )
+    registry.update_state("plug-1", {"is_on": False})
+
+    async def fake_trigger_refresh(device_id: str):
+        assert device_id == "plug-1"
+        return registry.update_state(device_id, {"is_on": True})
+
+    monkeypatch.setattr(state_module, "trigger_refresh", fake_trigger_refresh)
+
+    with TestClient(app) as client:
+        missing_id = client.get("/state?refresh=true")
+        refreshed = client.get(
+            "/state?refresh=true&refresh_request_id=refresh-123"
+        )
+
+    assert missing_id.status_code == 400
+    assert refreshed.status_code == 200
+    payload = refreshed.json()
+    assert payload["entries"]["config-1"]["latest_state"]["is_on"] is True
+    assert payload["refresh"] == {
+        "request_id": "refresh-123",
+        "performed": True,
+        "status": "refreshed",
+        "observed_at": payload["refresh"]["observed_at"],
+        "source": "kasa_device",
+    }
 
 
 def test_deconfigure_requires_config_id_for_tp_link() -> None:
