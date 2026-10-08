@@ -616,6 +616,11 @@ async def fetch_device_state(
 ) -> dict[str, Any]:
     device = await _resolve_device(host=host, username=username, password=password)
     try:
+        # A device may have changed outside PiPhi (for example, in the Kasa app)
+        # after the connection object was created. Always refresh immediately
+        # before serializing so automation conditions see the physical state.
+        await device.update()
+        _cache_device_config(host, device)
         return _serialize_device(device)
     finally:
         await _disconnect_device(device)
@@ -632,6 +637,9 @@ async def execute_device_command(
     args = args or {}
     device = await _resolve_device(host=host, username=username, password=password)
     try:
+        # Commands such as toggle depend on the current state. Refresh first so
+        # changes made by another controller are not mistaken for stale state.
+        await device.update()
         target = _resolve_command_target(device, args)
 
         if command == "turn_on":
