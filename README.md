@@ -23,8 +23,8 @@ devices remains an explicit pre-GA gate.
 
 ## Runtime SDK and testkit
 
-- runtime SDK: `piphi-runtime-kit-python==0.7.1`
-- test helper during development: `piphi-runtime-testkit-python==0.1.3`
+- runtime SDK: `piphi-runtime-kit-python==0.8.1`
+- test helper during development: `piphi-runtime-testkit-python==0.1.4`
 
 The runtime kit and testkit are installed from PyPI, so CI and release installs
 do not require sibling repository checkouts.
