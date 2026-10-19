@@ -362,7 +362,7 @@ def _build_supported_commands(
             {
                 "id": "set_brightness",
                 "label": "Set Brightness",
-                "args": _command_args_for_child(has_children, ["value"]),
+                "args": _command_args_for_child(has_children, ["brightness"]),
             }
         )
 
@@ -371,7 +371,7 @@ def _build_supported_commands(
             {
                 "id": "set_color_temperature",
                 "label": "Set Color Temperature",
-                "args": _command_args_for_child(has_children, ["value"]),
+                "args": _command_args_for_child(has_children, ["kelvin"]),
             }
         )
 
@@ -589,10 +589,16 @@ async def discover_devices(
     devices: list[dict[str, Any]] = []
     failures: list[str] = []
 
-    for _, device in found.items():
+    for discovered_host, device in found.items():
         try:
-            # Discover.discover returns initialized devices. A second update adds
-            # latency and can incorrectly discard a valid discovery response.
+            # Some python-kasa transports return a connected device whose
+            # feature data is still lazy. Refresh before serialization so a
+            # valid discovery result is not rejected as unreadable.
+            await device.update()
+            resolved_host = str(
+                getattr(device, "host", "") or discovered_host
+            ).strip()
+            _cache_device_config(resolved_host, device)
             devices.append(_serialize_device(device))
         except Exception as exc:
             host_hint = str(getattr(device, "host", "") or "unknown-host")
@@ -693,14 +699,16 @@ async def execute_device_command(
                 feature_id="",
                 candidates=["brightness", "dimming_level"],
             )
-            await feature.set_value(_to_int(args.get("value"), "value"))
+            brightness = args.get("brightness", args.get("value"))
+            await feature.set_value(_to_int(brightness, "brightness"))
         elif command == "set_color_temperature":
             feature = _resolve_writable_feature(
                 target,
                 feature_id="",
                 candidates=["color_temperature", "color_temp"],
             )
-            await feature.set_value(_to_int(args.get("value"), "value"))
+            kelvin = args.get("kelvin", args.get("value"))
+            await feature.set_value(_to_int(kelvin, "kelvin"))
         elif command == "set_hue_saturation":
             hue_feature = _resolve_writable_feature(
                 target, feature_id="", candidates=["hue"]

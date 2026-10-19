@@ -1208,7 +1208,7 @@ def test_tp_link_discovery_uses_each_detected_lan_broadcast(monkeypatch) -> None
 
     assert observed_targets == ["10.0.0.255", "192.168.50.255"]
     assert devices[0]["host"] == "192.168.1.25"
-    assert device.update_calls == 0
+    assert device.update_calls == 1
     assert device.disconnect_calls == 1
 
 
@@ -1424,6 +1424,55 @@ def test_dynamic_feature_command_sets_writable_feature(monkeypatch) -> None:
 
     assert feature.value is False
     assert device.disconnect_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("command", "feature_id", "args", "expected"),
+    [
+        ("set_brightness", "brightness", {"brightness": 42}, 42),
+        ("set_color_temperature", "color_temperature", {"kelvin": 3000}, 3000),
+    ],
+)
+def test_named_light_command_arguments_match_the_entity_contract(
+    monkeypatch, command: str, feature_id: str, args: dict[str, int], expected: int
+) -> None:
+    feature = _FakeFeature()
+    device = _FakeKasaDevice(feature)
+    device.features = {feature_id: feature}
+
+    async def fake_resolve_device(*, host: str, username=None, password=None):
+        return device
+
+    monkeypatch.setattr(kasa_client_module, "_resolve_device", fake_resolve_device)
+
+    asyncio.run(
+        kasa_client_module.execute_device_command(
+            host="192.168.1.25",
+            command=command,
+            args=args,
+        )
+    )
+
+    assert feature.value == expected
+    assert device.disconnect_calls == 1
+
+
+def test_supported_light_commands_advertise_their_canonical_argument_names() -> None:
+    device = _FakeKasaDevice(_FakeFeature())
+    commands = kasa_client_module._build_supported_commands(
+        device,
+        {
+            "brightness": {"id": "brightness", "writable": True},
+            "color_temperature": {
+                "id": "color_temperature",
+                "writable": True,
+            },
+        },
+    )
+    args_by_command = {command["id"]: command["args"] for command in commands}
+
+    assert args_by_command["set_brightness"] == ["brightness"]
+    assert args_by_command["set_color_temperature"] == ["kelvin"]
 
 
 def test_tp_link_state_returns_404_for_unknown_explicit_device() -> None:
