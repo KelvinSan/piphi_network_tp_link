@@ -164,8 +164,13 @@ def _match_feature(
 def _extract_energy_metrics(features: dict[str, dict[str, Any]]) -> dict[str, float]:
     power_value, power_unit = _match_feature(
         features,
-        id_tokens=["power", "current_power", "emeter_power"],
-        name_tokens=["power"],
+        id_tokens=[
+            "power",
+            "current_power",
+            "emeter_power",
+            "current_consumption",
+        ],
+        name_tokens=["power", "current consumption"],
     )
     today_value, today_unit = _match_feature(
         features,
@@ -240,7 +245,7 @@ def _derive_capabilities_from_features(
         if feature_type in {"number", "sensor", "binary_sensor"}:
             capabilities.add("telemetry")
 
-    if any("power" in str(f.get("id", "")).lower() for f in features.values()):
+    if "current_power_w" in _extract_energy_metrics(features):
         capabilities.add("energy_power")
 
     capabilities.add("refresh")

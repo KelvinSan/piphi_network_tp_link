@@ -119,6 +119,48 @@ def test_telemetry_metrics_promote_environment_feature_values() -> None:
     assert metrics["humidity"] == 47.0
 
 
+def test_kl110_current_consumption_is_promoted_to_current_power_telemetry() -> None:
+    features = {
+        "current_consumption": {
+            "id": "current_consumption",
+            "name": "Current consumption",
+            "type": "1",
+            "value": 0.0,
+            "unit": "W",
+        },
+        "consumption_today": {
+            "id": "consumption_today",
+            "name": "Today's consumption",
+            "type": "1",
+            "value": 0.0,
+            "unit": "kWh",
+        },
+        "consumption_this_month": {
+            "id": "consumption_this_month",
+            "name": "This month's consumption",
+            "type": "1",
+            "value": 0.041,
+            "unit": "kWh",
+        },
+    }
+
+    energy = kasa_client_module._extract_energy_metrics(features)
+    capabilities = kasa_client_module._derive_capabilities_from_features(features)
+    metrics = config_module._build_telemetry_metrics(
+        {"is_on": False, "energy": energy}
+    )
+
+    assert energy == {
+        "current_power_w": 0.0,
+        "today_kwh": 0.0,
+        "month_kwh": 0.041,
+    }
+    assert "energy_power" in capabilities
+    assert metrics["power"] == 0.0
+    assert metrics["energy_power"] == 0.0
+    assert metrics["current_power_w"] == 0.0
+
+
 class _DummyTask:
     def done(self) -> bool:
         return True
